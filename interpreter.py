@@ -11,6 +11,7 @@ from parser import (
     Override,
     Parent,
     SelfRef,
+    StringLit,
 )
 
 
@@ -19,13 +20,22 @@ class BackEdge(Node):
     base: Block | Override
 
 
+class BuiltInFn(Node):
+    pass
+
+
 @dataclass
-class IntOp(Node):
+class IntOp(BuiltInFn):
     fn: Callable[[int, int], int]
 
 
 @dataclass
-class Select(Node):
+class IntStr(BuiltInFn):
+    pass
+
+
+@dataclass
+class Select(BuiltInFn):
     pass
 
 
@@ -39,6 +49,7 @@ def int_op_block(parent: Block, fn: Callable[[int, int], int]) -> Block:
 
 
 def int_to_block(node: IntLit) -> Block:
+    assert isinstance(node, IntLit)
     result = Block(
         defs=[
             Definition(name="_inner", expr=node),
@@ -59,6 +70,7 @@ def int_to_block(node: IntLit) -> Block:
     result.defs.append(
         Definition(name="mod", expr=int_op_block(result, lambda x, y: x % y))
     )
+    result.defs.append(Definition(name="str", expr=IntStr()))
     result.defs.append(
         Definition(
             name="select",
@@ -69,6 +81,62 @@ def int_to_block(node: IntLit) -> Block:
                 ]
             ),
         )
+    )
+    return result
+
+
+@dataclass
+class StrCat(BuiltInFn):
+    pass
+
+
+@dataclass
+class StrEq(BuiltInFn):
+    pass
+
+
+@dataclass
+class StrLen(BuiltInFn):
+    pass
+
+
+def str_to_block(node: StringLit) -> Block:
+    assert isinstance(node, StringLit)
+    result = Block(
+        defs=[
+            Definition(name="_inner", expr=node),
+        ]
+    )
+    result.defs.extend(
+        [
+            Definition(
+                name="cat",
+                expr=Block(
+                    defs=[
+                        Definition(name="x", expr=BackEdge(base=result)),
+                        Definition(name="result", expr=StrCat()),
+                    ]
+                ),
+            ),
+            Definition(
+                name="eq",
+                expr=Block(
+                    defs=[
+                        Definition(name="x", expr=BackEdge(base=result)),
+                        Definition(name="result", expr=StrEq()),
+                    ]
+                ),
+            ),
+            Definition(
+                name="len",
+                expr=Block(
+                    defs=[
+                        Definition(name="x", expr=BackEdge(base=result)),
+                        Definition(name="result", expr=StrLen()),
+                    ]
+                ),
+            ),
+        ]
     )
     return result
 
@@ -112,6 +180,8 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return Definition(name=expr.name, expr=preprocess(parents, expr.expr))
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
+    elif isinstance(expr, StringLit):
+        return str_to_block(expr)
     elif isinstance(expr, (Identifier, SelfRef)):
         return expr
     else:
@@ -141,7 +211,7 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         # Copy the object so we can update the base later.
         return BackEdge(base=node.base)
-    elif isinstance(node, (SelfRef, IntLit, Identifier, Select, IntOp)):
+    elif isinstance(node, (SelfRef, IntLit, StringLit, Identifier, BuiltInFn)):
         return node
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -162,7 +232,7 @@ def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         if id(node.base) in mapping:
             node.base = mapping[id(node.base)]
-    elif isinstance(node, (SelfRef, IntLit, Identifier, Select, IntOp)):
+    elif isinstance(node, (SelfRef, IntLit, StringLit, Identifier, BuiltInFn)):
         pass
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -204,6 +274,26 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             return evaluate_result(context, Identifier(name="true"))
         else:
             return evaluate_result(context, Identifier(name="false"))
+    elif isinstance(expr, IntStr):
+        x = evaluate_result(context, Identifier(name="_inner"))
+        assert isinstance(x, IntLit)
+        return str_to_block(StringLit(value=str(x.value)))
+    elif isinstance(expr, StrCat):
+        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
+        y = evaluate_result(context, Access(base=Identifier(name="y"), attr="_inner"))
+        assert isinstance(x, StringLit), f"{x=}"
+        assert isinstance(y, StringLit), f"{y=}"
+        return str_to_block(StringLit(value=x.value + y.value))
+    elif isinstance(expr, StrEq):
+        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
+        y = evaluate_result(context, Access(base=Identifier(name="y"), attr="_inner"))
+        assert isinstance(x, StringLit)
+        assert isinstance(y, StringLit)
+        return int_to_block(IntLit(value=int(x.value == y.value)))
+    elif isinstance(expr, StrLen):
+        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
+        assert isinstance(x, StringLit)
+        return int_to_block(IntLit(value=len(x)))
     elif isinstance(expr, SelfRef):
         return context
     else:

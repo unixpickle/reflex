@@ -28,6 +28,11 @@ class IntLit(Node):
 
 
 @dataclass
+class StringLit(Node):
+    value: str
+
+
+@dataclass
 class SelfRef(Node):
     pass
 
@@ -35,11 +40,6 @@ class SelfRef(Node):
 @dataclass
 class Parent(Node):
     depth: int
-
-
-@dataclass
-class AncestorLookup(Node):
-    name: str
 
 
 @dataclass
@@ -115,10 +115,64 @@ def tokenize(src: str):
                 while i < len(src) and src[i] != "\n":
                     adv()
                 continue
-        if ch == "^" and peek(1) == "^":
-            add("ANCESTOR", "^^")
-            adv(2)
+
+        # strings: "..." or '...'
+        if ch == '"' or ch == "'":
+            quote = ch
+            j = i + 1
+            buf = []
+            escape = False
+            start_line, start_col = line, col
+            while j < len(src):
+                c = src[j]
+                if escape:
+                    if c == "n":
+                        buf.append("\n")
+                    elif c == "t":
+                        buf.append("\t")
+                    elif c == "r":
+                        buf.append("\r")
+                    elif c == "\\":
+                        buf.append("\\")
+                    elif c == '"':
+                        buf.append('"')
+                    elif c == "'":
+                        buf.append("'")
+                    else:
+                        # preserve unknown escape literally
+                        buf.append("\\")
+                        buf.append(c)
+                    escape = False
+                    j += 1
+                    continue
+                if c == "\\":
+                    escape = True
+                    j += 1
+                    continue
+                if c == quote:
+                    add("STRING", "".join(buf))
+                    # advance past closing quote
+                    adv(j - i + 1)
+                    break
+                if c == "\n":
+                    raise LexError(
+                        f"Unterminated string starting at {start_line}:{start_col}"
+                    )
+                buf.append(c)
+                j += 1
+            else:
+                raise LexError(
+                    f"Unterminated string starting at {start_line}:{start_col}"
+                )
             continue
+
+        # explicit error for the removed ancestor operator
+        if ch == "^" and peek(1) == "^":
+            raise LexError(
+                f"The '^^' ancestor lookup operator was removed at {line}:{col}. "
+                "Remove it or replace with your intended alternative."
+            )
+
         if ch in "{}[].=,;":
             add(ch, ch)
             adv()
@@ -259,19 +313,11 @@ class Parser:
             return Block(defs)
         if t.typ == "INT":
             return IntLit(int(self.expect("INT").val))
+        if t.typ == "STRING":
+            return StringLit(self.expect("STRING").val)
         if t.typ == "SELF":
             self.expect("SELF")
             return SelfRef()
-        if t.typ == "ANCESTOR":
-            self.expect("ANCESTOR")
-            self.expect(".")
-            if self.peek().typ == "IDENT":
-                name = self.expect("IDENT").val
-            elif self.peek().typ == "DOLLAR":
-                name = self.expect("DOLLAR").val
-            else:
-                raise ParseError("name expected after '^^.'")
-            return AncestorLookup(name)
         if t.typ == "PARENT":
             self.expect("PARENT")
             return Parent(1)
