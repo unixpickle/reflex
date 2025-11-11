@@ -2,7 +2,7 @@
 
 This is a prototype language designed around defining objects and patching them.
 
-Reflex generalizes object-oriented inheritence to infinite levels of recurrence. In an OOP language, classes have methods, and you can subclass a class to override methods. In reflex, there are effectively "classes on classes on classes" all the way down&mdash;you can override variables within methods just like you would by overriding methods on a class.
+Reflex generalizes object-oriented inheritence from two-layers to infinite layers. In an OOP language, classes have methods, and you can subclass a class to override methods. In reflex, there are effectively "classes on classes on classes" all the way down&mdash;you can override variables within methods just like you would override methods on a class.
 
 # Examples
 
