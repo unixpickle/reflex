@@ -144,19 +144,23 @@ def str_to_block(node: StringLit) -> Block:
 def block_get(block: Block | Override, key: str) -> Node:
     """
     Get a key, prioritizing earlier definitions over later ones.
+    Iterative (non-recursive), so deep override chains don't hit recursion limits.
     """
     assert isinstance(block, (Block, Override)), (
         f"cannot get key {key!r} of node type {type(block)}"
     )
-    for d in block.defs:
-        if key == d.name:
-            return d.expr
-    if isinstance(block, Override):
-        return block_get(block.base, key)
-    raise KeyError(
-        f"object has no key {key!r}, keys are {[d.name for d in block.defs]}"
-    )
 
+    cur: Block | Override | None = block
+    while cur is not None:
+        for d in cur.defs:
+            if key == d.name:
+                return d.expr
+        if isinstance(cur, Override):
+            cur = cur.base
+        else:
+            cur = None
+
+    raise KeyError(f"object has no key {key!r}, keys are {[d.name for d in block.defs]}")
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
     """
@@ -246,59 +250,184 @@ def clone_tree(node: Node) -> Node:
 
 
 def evaluate_result(context: Block | Override, expr: Node) -> Node:
-    if isinstance(expr, Access):
-        owner = evaluate_result(context, expr.base)
-        lookup = block_get(owner, expr.attr)
-        return evaluate_result(owner, lookup)
-    elif isinstance(expr, Override):
-        base_block = evaluate_result(context, expr.base)
-        new_block = clone_tree(base_block)
-        new_block.defs = expr.defs + new_block.defs
-        return new_block
-    elif isinstance(expr, Identifier):
-        return evaluate_result(context, block_get(context, expr.name))
-    elif isinstance(expr, BackEdge):
-        return evaluate_result(context, expr.base)
-    elif isinstance(expr, IntOp):
-        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
-        y = evaluate_result(context, Access(base=Identifier(name="y"), attr="_inner"))
-        assert isinstance(x, IntLit)
-        assert isinstance(y, IntLit)
-        result = expr.fn(x.value, y.value)
-        return int_to_block(IntLit(value=result))
-    elif isinstance(expr, Select):
-        cond = evaluate_result(
-            context, Access(base=Identifier(name="cond"), attr="_inner")
-        )
-        if cond.value:
-            return evaluate_result(context, Identifier(name="true"))
-        else:
-            return evaluate_result(context, Identifier(name="false"))
-    elif isinstance(expr, IntStr):
-        x = evaluate_result(context, Identifier(name="_inner"))
-        assert isinstance(x, IntLit)
-        return str_to_block(StringLit(value=str(x.value)))
-    elif isinstance(expr, StrCat):
-        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
-        y = evaluate_result(context, Access(base=Identifier(name="y"), attr="_inner"))
-        assert isinstance(x, StringLit), f"{x=}"
-        assert isinstance(y, StringLit), f"{y=}"
-        return str_to_block(StringLit(value=x.value + y.value))
-    elif isinstance(expr, StrEq):
-        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
-        y = evaluate_result(context, Access(base=Identifier(name="y"), attr="_inner"))
-        assert isinstance(x, StringLit)
-        assert isinstance(y, StringLit)
-        return int_to_block(IntLit(value=int(x.value == y.value)))
-    elif isinstance(expr, StrLen):
-        x = evaluate_result(context, Access(base=Identifier(name="x"), attr="_inner"))
-        assert isinstance(x, StringLit)
-        return int_to_block(IntLit(value=len(x)))
-    elif isinstance(expr, SelfRef):
-        return context
-    else:
-        return expr
+    """
+    Non-recursive evaluator using an explicit continuation stack.
 
+    The stack holds small 'frames' (tagged tuples) that describe what to do
+    with the result of the current sub-evaluation. This mirrors the call stack
+    of the original recursive implementation while avoiding Python recursion.
+    """
+    stack: list[tuple] = []
+
+    while True:
+        # ---- Descend (choose what to evaluate next) ----
+        if isinstance(expr, Access):
+            # Evaluate base first; after that, look up attr in the owner,
+            # evaluate it in the owner context, then restore the previous context.
+            stack.append(("access_after_base", expr.attr, context))
+            expr = expr.base
+            continue
+
+        if isinstance(expr, Override):
+            # Evaluate base; then build a new block with defs prepended.
+            stack.append(("override_after_base", expr.defs))
+            expr = expr.base
+            continue
+
+        if isinstance(expr, Identifier):
+            expr = block_get(context, expr.name)
+            continue
+
+        if isinstance(expr, BackEdge):
+            expr = expr.base
+            continue
+
+        if isinstance(expr, IntOp):
+            # Evaluate x._inner then y._inner, then apply fn.
+            stack.append(("intop_after_x", expr.fn, context))
+            expr = Access(base=Identifier(name="x"), attr="_inner")
+            continue
+
+        if isinstance(expr, Select):
+            # Evaluate cond._inner, then pick 'true' or 'false' in the *current* context.
+            stack.append(("select_after_cond", context))
+            expr = Access(base=Identifier(name="cond"), attr="_inner")
+            continue
+
+        if isinstance(expr, IntStr):
+            # Evaluate _inner, then convert to string block.
+            stack.append(("intstr_after_inner",))
+            expr = Identifier(name="_inner")
+            continue
+
+        if isinstance(expr, StrCat):
+            # Evaluate x._inner then y._inner, then concatenate.
+            stack.append(("strcat_after_x", context))
+            expr = Access(base=Identifier(name="x"), attr="_inner")
+            continue
+
+        if isinstance(expr, StrEq):
+            # Evaluate x._inner then y._inner, then compare.
+            stack.append(("streq_after_x", context))
+            expr = Access(base=Identifier(name="x"), attr="_inner")
+            continue
+
+        if isinstance(expr, StrLen):
+            # Evaluate x._inner, then take its length.
+            stack.append(("strlen_after_x",))
+            expr = Access(base=Identifier(name="x"), attr="_inner")
+            continue
+
+        if isinstance(expr, SelfRef):
+            value: Node = context
+        else:
+            # Leaf (e.g., IntLit, StringLit, Block, BuiltInFn that evaluates to itself, etc.)
+            value = expr
+
+        # ---- Return / apply continuations ----
+        while True:
+            if not stack:
+                return value
+
+            tag, *rest = stack.pop()
+
+            if tag == "access_after_base":
+                attr, saved_ctx = rest
+                owner = value
+                # Evaluate attribute in the owner's context.
+                expr = block_get(owner, attr)
+                # Restore the caller's context after finishing attr evaluation.
+                stack.append(("restore_ctx", saved_ctx))
+                context = owner
+                break  # go back to descend with new expr
+
+            if tag == "restore_ctx":
+                (saved_ctx,) = rest
+                context = saved_ctx
+                # Keep 'value' and continue applying higher frames.
+                continue
+
+            if tag == "override_after_base":
+                (defs,) = rest
+                base_block = value
+                new_block = clone_tree(base_block)
+                new_block.defs = list(defs) + new_block.defs
+                value = new_block
+                # Continue applying frames with this value.
+                continue
+
+            if tag == "intop_after_x":
+                fn, saved_ctx = rest
+                x = value
+                assert isinstance(x, IntLit), f"{x=}"
+                # After y is evaluated (and context restored), apply fn(x, y).
+                stack.append(("intop_apply", fn, x, saved_ctx))
+                expr = Access(base=Identifier(name="y"), attr="_inner")
+                break  # descend to evaluate y
+
+            if tag == "intop_apply":
+                fn, x, saved_ctx = rest
+                y = value
+                assert isinstance(y, IntLit), f"{y=}"
+                value = int_to_block(IntLit(value=fn(x.value, y.value)))
+                # (context has already been restored by the access frame)
+                continue
+
+            if tag == "select_after_cond":
+                (saved_ctx,) = rest
+                cond = value
+                # cond should be an int-like (0/1). If your IntLit differs, adjust here.
+                assert isinstance(cond, IntLit), f"{cond=}"
+                expr = Identifier(name="true") if cond.value else Identifier(name="false")
+                context = saved_ctx
+                break  # descend to evaluate chosen branch
+
+            if tag == "intstr_after_inner":
+                x = value
+                assert isinstance(x, IntLit), f"{x=}"
+                value = str_to_block(StringLit(value=str(x.value)))
+                continue
+
+            if tag == "strcat_after_x":
+                (saved_ctx,) = rest
+                x = value
+                assert isinstance(x, StringLit), f"{x=}"
+                stack.append(("strcat_apply", x, saved_ctx))
+                expr = Access(base=Identifier(name="y"), attr="_inner")
+                break  # descend to evaluate y
+
+            if tag == "strcat_apply":
+                x, saved_ctx = rest
+                y = value
+                assert isinstance(y, StringLit), f"{y=}"
+                value = str_to_block(StringLit(value=x.value + y.value))
+                context = saved_ctx
+                continue
+
+            if tag == "streq_after_x":
+                (saved_ctx,) = rest
+                x = value
+                assert isinstance(x, StringLit), f"{x=}"
+                stack.append(("streq_apply", x, saved_ctx))
+                expr = Access(base=Identifier(name="y"), attr="_inner")
+                break  # descend to evaluate y
+
+            if tag == "streq_apply":
+                x, saved_ctx = rest
+                y = value
+                assert isinstance(y, StringLit), f"{y=}"
+                value = int_to_block(IntLit(value=int(x.value == y.value)))
+                context = saved_ctx
+                continue
+
+            if tag == "strlen_after_x":
+                x = value
+                assert isinstance(x, StringLit), f"{x=}"
+                # If your StringLit stores the raw string elsewhere, adjust accordingly.
+                value = int_to_block(IntLit(value=len(x.value)))
+                continue
+
+            raise RuntimeError(f"unknown continuation frame: {tag}")
 
 def program_result(program: Block) -> Node:
     program = preprocess([], program)
