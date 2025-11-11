@@ -99,8 +99,6 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return BackEdge(base=parents[len(parents) - (expr.depth + 1)])
     elif isinstance(expr, Access):
         return Access(base=preprocess(parents, expr.base), attr=expr.attr)
-    elif isinstance(expr, SelfRef):
-        return parents[-1]
     elif isinstance(expr, Block):
         b = Block(defs=[])
         b.defs = [preprocess(parents + [b], d) for d in expr.defs]
@@ -114,7 +112,7 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return Definition(name=expr.name, expr=preprocess(parents, expr.expr))
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
-    elif isinstance(expr, Identifier):
+    elif isinstance(expr, (Identifier, SelfRef)):
         return expr
     else:
         raise ValueError(f"type {type(expr)} cannot fill parents")
@@ -206,6 +204,8 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             return evaluate_result(context, Identifier(name="true"))
         else:
             return evaluate_result(context, Identifier(name="false"))
+    elif isinstance(expr, SelfRef):
+        return context
     else:
         return expr
 

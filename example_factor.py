@@ -4,7 +4,8 @@ from parser import parse_module
 module = parse_module("""
     factor = {
         f = 2
-        result = x.mod[y=^.f].result.select[false=^.f, true=^[f=^.^.f.add[y=1].result].result].result
+        next_result = @[f=^.f.add[y=1].result].result
+        result = x.mod[y=^.f].result.select[false=^.f, true=^.next_result].result
     }
     result = factor[x=533].result
 """)
