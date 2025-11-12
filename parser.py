@@ -102,19 +102,17 @@ def tokenize(src: str):
 
     while i < len(src):
         ch = src[i]
+
+        # whitespace
         if ch in " \t\r":
             adv()
             continue
+
+        # newline -> explicit NEWLINE token
         if ch == "\n":
             add("NEWLINE", "\n")
             adv()
             continue
-        # line comments: lines starting with --- (as in your sample)
-        if ch == "-" and (i == 0 or src[i - 1] == "\n"):
-            if src[i : i + 3] == "---":
-                while i < len(src) and src[i] != "\n":
-                    adv()
-                continue
 
         # strings: "..." or '...'
         if ch == '"' or ch == "'":
@@ -139,7 +137,6 @@ def tokenize(src: str):
                     elif c == "'":
                         buf.append("'")
                     else:
-                        # preserve unknown escape literally
                         buf.append("\\")
                         buf.append(c)
                     escape = False
@@ -151,8 +148,7 @@ def tokenize(src: str):
                     continue
                 if c == quote:
                     add("STRING", "".join(buf))
-                    # advance past closing quote
-                    adv(j - i + 1)
+                    adv(j - i + 1)  # past closing quote
                     break
                 if c == "\n":
                     raise LexError(
@@ -166,17 +162,26 @@ def tokenize(src: str):
                 )
             continue
 
-        # explicit error for the removed ancestor operator
+        # line comments starting with '#': skip until (but not including) newline
+        if ch == "#":
+            while i < len(src) and src[i] != "\n":
+                adv()
+            continue
+
+        # explicit error for removed ancestor operator
         if ch == "^" and peek(1) == "^":
             raise LexError(
                 f"The '^^' ancestor lookup operator was removed at {line}:{col}. "
                 "Remove it or replace with your intended alternative."
             )
 
+        # single-char punctuation
         if ch in "{}[].=,;":
             add(ch, ch)
             adv()
             continue
+
+        # special sigils
         if ch == "^":
             add("PARENT", "^")
             adv()
@@ -189,6 +194,8 @@ def tokenize(src: str):
             add("DOLLAR", "$")
             adv()
             continue
+
+        # integers (allow leading minus)
         if ch.isdigit() or (ch == "-" and peek(1).isdigit()):
             j = i + 1
             if ch == "-":
@@ -199,6 +206,8 @@ def tokenize(src: str):
             add("INT", val)
             adv(len(val))
             continue
+
+        # identifiers
         if ch.isalpha() or ch == "_":
             j = i + 1
             while j < len(src) and (src[j].isalnum() or src[j] == "_"):
@@ -207,7 +216,9 @@ def tokenize(src: str):
             add("IDENT", val)
             adv(len(val))
             continue
+
         raise LexError(f"Unexpected {ch!r} at {line}:{col}")
+
     tokens.append(Token("EOF", "", line, col))
     return tokens
 
