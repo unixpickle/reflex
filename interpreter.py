@@ -3,6 +3,7 @@ from typing import Callable
 
 from parser import (
     Access,
+    AncestorLookup,
     Block,
     Definition,
     Identifier,
@@ -150,17 +151,14 @@ def block_get(block: Block | Override, key: str) -> Node:
         f"cannot get key {key!r} of node type {type(block)}"
     )
 
-    cur: Block | Override | None = block
-    while cur is not None:
-        for d in cur.defs:
-            if key == d.name:
-                return d.expr
-        if isinstance(cur, Override):
-            cur = cur.base
-        else:
-            cur = None
+    for d in block.defs:
+        if key == d.name:
+            return d.expr
 
-    raise KeyError(f"object has no key {key!r}, keys are {[d.name for d in block.defs]}")
+    raise KeyError(
+        f"object has no key {key!r}, keys are {[d.name for d in block.defs]}"
+    )
+
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
     """
@@ -171,13 +169,31 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return BackEdge(base=parents[len(parents) - (expr.depth + 1)])
     elif isinstance(expr, Access):
         return Access(base=preprocess(parents, expr.base), attr=expr.attr)
+    elif isinstance(expr, AncestorLookup):
+        found_parent = None
+        for parent in parents[::-1]:
+            assert isinstance(parent, (Override, Block))
+            try:
+                block_get(parent, expr.name)
+                found_parent = parent
+            except KeyError:
+                continue
+        if found_parent is None:
+            raise KeyError(f"ancestor lookup failed for key {expr.name!r}")
+        return Access(base=BackEdge(base=found_parent), attr=expr.name)
     elif isinstance(expr, Block):
         b = Block(defs=[])
+        b.defs = [
+            Definition(name=d.name, expr=None) for d in expr.defs
+        ]  # temporary, so that ancestor lookup works.
         b.defs = [preprocess(parents + [b], d) for d in expr.defs]
         return b
     elif isinstance(expr, Override):
         o = Override(base=None, defs=[])
         o.base = preprocess(parents, expr.base)
+        o.defs = [
+            Definition(name=d.name, expr=None) for d in expr.defs
+        ]  # temporary, so that ancestor lookup works.
         o.defs = [preprocess(parents + [o], d) for d in expr.defs]
         return o
     elif isinstance(expr, Definition):
@@ -378,7 +394,9 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 cond = value
                 # cond should be an int-like (0/1). If your IntLit differs, adjust here.
                 assert isinstance(cond, IntLit), f"{cond=}"
-                expr = Identifier(name="true") if cond.value else Identifier(name="false")
+                expr = (
+                    Identifier(name="true") if cond.value else Identifier(name="false")
+                )
                 context = saved_ctx
                 break  # descend to evaluate chosen branch
 
@@ -428,6 +446,7 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 continue
 
             raise RuntimeError(f"unknown continuation frame: {tag}")
+
 
 def program_result(program: Block) -> Node:
     program = preprocess([], program)

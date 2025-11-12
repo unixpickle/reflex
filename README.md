@@ -23,18 +23,20 @@ This example computes the factors of a number from smallest to largest and conca
 
 ```
 factors = {
-    f = 2
-    next_result = @[f=^.f.add[y=1].result].result
-    remaining_factors = @[x=^.x.div[y=^.^.f].result f=2].result
-    is_done = x.eq[y=^.f].result
-    mod_out = x.mod[y=^.f].result
-    result = is_done.select[
-        true=^.x.str
-        false=^.mod_out.select[
-            false=^.^.f.str.cat[y=" "].result.cat[y=^.^.^.remaining_factors].result
-            true=^.^.next_result
-        ].result
+  input = x # x is passed as an argument
+  f = 2 # the current guess for a factor
+
+  result_if_not_divisible = @[f=^.f.add[y=1].result].result
+  result_if_divisible = @[x=^^.input.div[y=^^.f].result f=2].result
+  is_prime = input.eq[y=^.f].result
+  is_not_divisible = input.mod[y=^.f].result
+  result = is_prime.select[
+    true=^.x.str
+    false=^.is_not_divisible.select[
+      true=^^.result_if_not_divisible
+      false=^^.f.str.cat[y=" "].result.cat[y=^^.result_if_divisible].result
     ].result
+  ].result
 }
 result = factors[x=246].result
 ```

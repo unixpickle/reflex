@@ -43,6 +43,11 @@ class Parent(Node):
 
 
 @dataclass
+class AncestorLookup(Node):
+    name: str
+
+
+@dataclass
 class Access(Node):
     base: Node
     attr: str
@@ -170,10 +175,9 @@ def tokenize(src: str):
 
         # explicit error for removed ancestor operator
         if ch == "^" and peek(1) == "^":
-            raise LexError(
-                f"The '^^' ancestor lookup operator was removed at {line}:{col}. "
-                "Remove it or replace with your intended alternative."
-            )
+            add("ANCESTOR", "^^")
+            adv(2)
+            continue
 
         # single-char punctuation
         if ch in "{}[].=,;":
@@ -332,6 +336,16 @@ class Parser:
         if t.typ == "PARENT":
             self.expect("PARENT")
             return Parent(1)
+        if t.typ == "ANCESTOR":
+            self.expect("ANCESTOR")
+            self.expect(".")
+            if self.peek().typ == "IDENT":
+                name = self.expect("IDENT").val
+            elif self.peek().typ == "DOLLAR":
+                name = self.expect("DOLLAR").val
+            else:
+                raise ParseError("name expected after '^^.'")
+            return AncestorLookup(name)
         if t.typ == "IDENT":
             return Identifier(self.expect("IDENT").val)
         if t.typ == "DOLLAR":
