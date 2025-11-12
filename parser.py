@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List
 
 
 class Node:
@@ -7,14 +6,8 @@ class Node:
 
 
 @dataclass
-class Definition(Node):
-    name: str
-    expr: Node
-
-
-@dataclass
 class Block(Node):
-    defs: List[Definition]
+    defs: dict[str, Node]
 
 
 @dataclass
@@ -56,7 +49,13 @@ class Access(Node):
 @dataclass
 class Override(Node):
     base: Node
-    defs: List[Definition]
+    defs: dict[str, Node]
+
+
+@dataclass
+class Definition:
+    name: str
+    expr: Node
 
 
 # =========================
@@ -252,21 +251,29 @@ class Parser:
         tok = self.match(typ)
         if not tok:
             raise ParseError(
-                f"Expected {typ}, got {self.peek().typ} at {self.peek().line}:{self.peek().col}"
+                f"Expected {typ}, got {self.peek().typ} at {self.peek_position()}"
             )
         return tok
+
+    def peek_position(self):
+        return f"{self.peek().line}:{self.peek().col}"
 
     def consume_delims(self):
         while self.peek().typ in {",", ";", "NEWLINE"}:
             self.k += 1
 
     def parse_module(self) -> Block:
-        defs = []
+        defs = {}
         self.consume_delims()
         while self.peek().typ not in {"EOF"}:
             if self.peek().typ not in {"IDENT", "DOLLAR"}:
                 break
-            defs.append(self.parse_definition())
+            d = self.parse_definition()
+            if d.name in defs:
+                raise ParseError(
+                    f"Redefinition of {d.name!r} at {self.peek_position()}"
+                )
+            defs[d.name] = d.expr
             self.consume_delims()
         self.expect("EOF")
         return Block(defs)
@@ -282,11 +289,16 @@ class Parser:
         expr = self.parse_expr()
         return Definition(name, expr)
 
-    def parse_def_list_until(self, stop):
-        defs = []
+    def parse_defs_until(self, stop) -> dict[str, Node]:
+        defs = {}
         self.consume_delims()
         while self.peek().typ not in stop:
-            defs.append(self.parse_definition())
+            d = self.parse_definition()
+            if d.name in defs:
+                raise ParseError(
+                    f"Redefinition of {d.name!r} at {self.peek_position()}"
+                )
+            defs[d.name] = d.expr
             self.consume_delims()
         return defs
 
@@ -312,7 +324,7 @@ class Parser:
                 continue
             if self.peek().typ == "[":
                 self.expect("[")
-                defs = self.parse_def_list_until({"]"})
+                defs = self.parse_defs_until({"]"})
                 self.expect("]")
                 node = Override(node, defs)
                 continue
@@ -323,7 +335,7 @@ class Parser:
         t = self.peek()
         if t.typ == "{":
             self.expect("{")
-            defs = self.parse_def_list_until({"}"})
+            defs = self.parse_defs_until({"}"})
             self.expect("}")
             return Block(defs)
         if t.typ == "INT":

@@ -5,7 +5,6 @@ from parser import (
     Access,
     AncestorLookup,
     Block,
-    Definition,
     Identifier,
     IntLit,
     Node,
@@ -42,44 +41,29 @@ class Select(BuiltInFn):
 
 def int_op_block(parent: Block, fn: Callable[[int, int], int]) -> Block:
     return Block(
-        defs=[
-            Definition(name="x", expr=BackEdge(base=parent)),
-            Definition(name="result", expr=IntOp(fn=fn)),
-        ]
+        defs=dict(
+            x=BackEdge(base=parent),
+            result=IntOp(fn=fn),
+        )
     )
 
 
 def int_to_block(node: IntLit) -> Block:
     assert isinstance(node, IntLit)
-    result = Block(
-        defs=[
-            Definition(name="_inner", expr=node),
-        ]
-    )
-    result.defs.append(
-        Definition(name="add", expr=int_op_block(result, lambda x, y: x + y))
-    )
-    result.defs.append(
-        Definition(name="eq", expr=int_op_block(result, lambda x, y: int(x == y)))
-    )
-    result.defs.append(
-        Definition(name="mul", expr=int_op_block(result, lambda x, y: x * y))
-    )
-    result.defs.append(
-        Definition(name="div", expr=int_op_block(result, lambda x, y: x // y))
-    )
-    result.defs.append(
-        Definition(name="mod", expr=int_op_block(result, lambda x, y: x % y))
-    )
-    result.defs.append(Definition(name="str", expr=IntStr()))
-    result.defs.append(
-        Definition(
-            name="select",
-            expr=Block(
-                defs=[
-                    Definition(name="cond", expr=BackEdge(base=result)),
-                    Definition(name="result", expr=Select()),
-                ]
+    result = Block(defs=dict(_inner=node))
+    result.defs.update(
+        dict(
+            add=int_op_block(result, lambda x, y: x + y),
+            eq=int_op_block(result, lambda x, y: int(x == y)),
+            mul=int_op_block(result, lambda x, y: x * y),
+            div=int_op_block(result, lambda x, y: x // y),
+            mod=int_op_block(result, lambda x, y: x % y),
+            str=IntStr(),
+            select=Block(
+                defs=dict(
+                    cond=BackEdge(base=result),
+                    result=Select(),
+                )
             ),
         )
     )
@@ -103,61 +87,39 @@ class StrLen(BuiltInFn):
 
 def str_to_block(node: StringLit) -> Block:
     assert isinstance(node, StringLit)
-    result = Block(
-        defs=[
-            Definition(name="_inner", expr=node),
-        ]
-    )
-    result.defs.extend(
-        [
-            Definition(
-                name="cat",
-                expr=Block(
-                    defs=[
-                        Definition(name="x", expr=BackEdge(base=result)),
-                        Definition(name="result", expr=StrCat()),
-                    ]
-                ),
+    result = Block(defs=dict(_inner=node))
+    result.defs.update(
+        dict(
+            cat=Block(
+                defs=dict(
+                    x=BackEdge(base=result),
+                    result=StrCat(),
+                )
             ),
-            Definition(
-                name="eq",
-                expr=Block(
-                    defs=[
-                        Definition(name="x", expr=BackEdge(base=result)),
-                        Definition(name="result", expr=StrEq()),
-                    ]
-                ),
+            eq=Block(
+                defs=dict(
+                    x=BackEdge(base=result),
+                    result=StrEq(),
+                )
             ),
-            Definition(
-                name="len",
-                expr=Block(
-                    defs=[
-                        Definition(name="x", expr=BackEdge(base=result)),
-                        Definition(name="result", expr=StrLen()),
-                    ]
-                ),
+            len=Block(
+                defs=dict(
+                    x=BackEdge(base=result),
+                    result=StrLen(),
+                )
             ),
-        ]
+        )
     )
     return result
 
 
 def block_get(block: Block | Override, key: str) -> Node:
-    """
-    Get a key, prioritizing earlier definitions over later ones.
-    Iterative (non-recursive), so deep override chains don't hit recursion limits.
-    """
     assert isinstance(block, (Block, Override)), (
         f"cannot get key {key!r} of node type {type(block)}"
     )
-
-    for d in block.defs:
-        if key == d.name:
-            return d.expr
-
-    raise KeyError(
-        f"object has no key {key!r}, keys are {[d.name for d in block.defs]}"
-    )
+    if key in block.defs:
+        return block.defs[key]
+    raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
 
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
@@ -182,22 +144,16 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
             raise KeyError(f"ancestor lookup failed for key {expr.name!r}")
         return Access(base=BackEdge(base=found_parent), attr=expr.name)
     elif isinstance(expr, Block):
-        b = Block(defs=[])
-        b.defs = [
-            Definition(name=d.name, expr=None) for d in expr.defs
-        ]  # temporary, so that ancestor lookup works.
-        b.defs = [preprocess(parents + [b], d) for d in expr.defs]
+        b = Block(defs={})
+        b.defs = {k: None for k in expr.defs.keys()}  # temporary for ancestor lookup
+        b.defs = {k: preprocess(parents + [b], v) for k, v in expr.defs.items()}
         return b
     elif isinstance(expr, Override):
-        o = Override(base=None, defs=[])
+        o = Override(base=None, defs={})
         o.base = preprocess(parents, expr.base)
-        o.defs = [
-            Definition(name=d.name, expr=None) for d in expr.defs
-        ]  # temporary, so that ancestor lookup works.
-        o.defs = [preprocess(parents + [o], d) for d in expr.defs]
+        o.defs = {k: None for k in expr.defs.keys()}  # temporary for ancestor lookup
+        o.defs = {k: preprocess(parents + [o], v) for k, v in expr.defs.items()}
         return o
-    elif isinstance(expr, Definition):
-        return Definition(name=expr.name, expr=preprocess(parents, expr.expr))
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
     elif isinstance(expr, StringLit):
@@ -213,20 +169,22 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
     Walk the tree, not following back edges, and deep-copy any blocks
     which are found.
     """
-    if isinstance(node, Definition):
-        return Definition(name=node.name, expr=_clone_blocks(node.expr, result))
-    elif isinstance(node, Access):
+    if isinstance(node, Access):
         return Access(base=_clone_blocks(node.base, result), attr=node.attr)
     elif isinstance(node, Block):
         assert id(node) not in result, "somehow found a circular reference"
-        result[id(node)] = Block(defs=[])
-        result[id(node)].defs = [_clone_blocks(block, result) for block in node.defs]
+        result[id(node)] = Block(defs={})
+        result[id(node)].defs = {
+            k: _clone_blocks(v, result) for k, v in node.defs.items()
+        }
         return result[id(node)]
     elif isinstance(node, Override):
         assert id(node) not in result, "somehow found a circular reference"
-        result[id(node)] = Override(base=None, defs=[])
+        result[id(node)] = Override(base=None, defs={})
         result[id(node)].base = _clone_blocks(node.base, result)
-        result[id(node)].defs = [_clone_blocks(d, result) for d in node.defs]
+        result[id(node)].defs = {
+            k: _clone_blocks(v, result) for k, v in node.defs.items()
+        }
         return result[id(node)]
     elif isinstance(node, BackEdge):
         # Copy the object so we can update the base later.
@@ -238,16 +196,14 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
 
 
 def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
-    if isinstance(node, Definition):
-        _replace_back_edges(node.expr, mapping)
-    elif isinstance(node, Access):
+    if isinstance(node, Access):
         _replace_back_edges(node.base, mapping)
     elif isinstance(node, Block):
-        for d in node.defs:
+        for d in node.defs.values():
             _replace_back_edges(d, mapping)
     elif isinstance(node, Override):
         _replace_back_edges(node.base, mapping)
-        for d in node.defs:
+        for d in node.defs.values():
             _replace_back_edges(d, mapping)
     elif isinstance(node, BackEdge):
         if id(node.base) in mapping:
@@ -367,7 +323,8 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 (defs,) = rest
                 base_block = value
                 new_block = clone_tree(base_block)
-                new_block.defs = list(defs) + new_block.defs
+                new_block.defs = new_block.defs.copy()
+                new_block.defs.update(defs)
                 value = new_block
                 # Continue applying frames with this value.
                 continue
