@@ -263,7 +263,7 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
 
         if isinstance(expr, Override):
             # Evaluate base; then build a new block with defs prepended.
-            stack.append(("override_after_base", expr.defs))
+            stack.append(("override_after_base", expr))
             expr = expr.base
             continue
 
@@ -347,11 +347,15 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 continue
 
             if tag == "override_after_base":
-                (defs,) = rest
+                (override,) = rest
                 base_block = value
                 new_block = clone_tree(base_block)
                 new_block.defs = new_block.defs.copy()
-                new_block.defs.update(defs)
+                for k, v in override.defs.items():
+                    new_def = clone_tree(v)
+                    # Back edges to the override should now point to the new block.
+                    _replace_back_edges(new_def, {id(override): new_block})
+                    new_block.defs[k] = new_def
                 value = new_block
                 # Continue applying frames with this value.
                 continue
