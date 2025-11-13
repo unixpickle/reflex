@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class Node:
@@ -8,6 +8,7 @@ class Node:
 @dataclass
 class Block(Node):
     defs: dict[str, Node]
+    cache: dict = field(default_factory=dict)
 
 
 @dataclass

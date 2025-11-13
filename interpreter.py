@@ -247,14 +247,9 @@ def clone_tree(node: Node) -> Node:
     _replace_back_edges(new_node, copies)
     return new_node
 
-
 def evaluate_result(context: Block | Override, expr: Node) -> Node:
     """
     Non-recursive evaluator using an explicit continuation stack.
-
-    The stack holds small 'frames' (tagged tuples) that describe what to do
-    with the result of the current sub-evaluation. This mirrors the call stack
-    of the original recursive implementation while avoiding Python recursion.
     """
     stack: list[tuple] = []
 
@@ -268,12 +263,20 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             continue
 
         if isinstance(expr, Override):
-            # Evaluate base; then build a new block with defs prepended.
             stack.append(("override_after_base", expr))
             expr = expr.base
             continue
 
         if isinstance(expr, Identifier):
+            # --- CACHE: bare identifier lookup in the current Block context ---
+            if isinstance(context, Block) and expr.name in context.cache:
+                # Treat cached value as the next expression (which will be a leaf).
+                expr = context.cache[expr.name]
+                continue
+
+            # Not cached: evaluate the definition and then cache the *evaluated* value.
+            if isinstance(context, Block):
+                stack.append(("cache_identifier", context, expr.name))
             expr = block_get(context, expr.name)
             continue
 
@@ -345,17 +348,32 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             if tag == "access_after_base":
                 attr, saved_ctx = rest
                 owner = value
-                # Evaluate attribute in the owner's context.
+
+                # --- CACHE fast path for attribute access on a Block owner ---
+                if isinstance(owner, Block) and attr in owner.cache:
+                    value = owner.cache[attr]
+                    context = saved_ctx
+                    # do not push restore frame; we already restored
+                    continue
+
+                # Evaluate attribute in the owner's context, and cache result afterwards.
                 expr = block_get(owner, attr)
-                # Restore the caller's context after finishing attr evaluation.
-                stack.append(("restore_ctx", saved_ctx))
+                stack.append(("cache_attr_then_restore", owner, attr, saved_ctx))
                 context = owner
                 break  # go back to descend with new expr
+
+            if tag == "cache_attr_then_restore":
+                owner, attr, saved_ctx = rest
+                # Store the fully evaluated result into the owner's cache.
+                if isinstance(owner, Block):
+                    owner.cache[attr] = value
+                context = saved_ctx
+                # Keep 'value' and continue applying higher frames.
+                continue
 
             if tag == "restore_ctx":
                 (saved_ctx,) = rest
                 context = saved_ctx
-                # Keep 'value' and continue applying higher frames.
                 continue
 
             if tag == "override_after_base":
@@ -365,40 +383,40 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 new_block.defs = new_block.defs.copy()
                 for k, v in override.defs.items():
                     new_def = clone_tree(v)
-                    # Back edges to the override should now point to the new block.
                     _replace_back_edges(new_def, {id(override): new_block})
                     new_block.defs[k] = new_def
                 value = new_block
-                # Continue applying frames with this value.
+                continue
+
+            if tag == "cache_identifier":
+                owner_block, name = rest
+                if isinstance(owner_block, Block):
+                    owner_block.cache[name] = value
+                # keep 'value'
                 continue
 
             if tag == "intop_after_x":
                 fn, saved_ctx = rest
                 x = value
                 assert isinstance(x, IntLit), f"{x=}"
-                # After y is evaluated (and context restored), apply fn(x, y).
                 stack.append(("intop_apply", fn, x, saved_ctx))
                 expr = Access(base=Identifier(name="y"), attr="_inner")
-                break  # descend to evaluate y
+                break
 
             if tag == "intop_apply":
                 fn, x, saved_ctx = rest
                 y = value
                 assert isinstance(y, IntLit), f"{y=}"
                 value = int_to_block(IntLit(value=fn(x.value, y.value)))
-                # (context has already been restored by the access frame)
                 continue
 
             if tag == "select_after_cond":
                 (saved_ctx,) = rest
                 cond = value
-                # cond should be an int-like (0/1). If your IntLit differs, adjust here.
                 assert isinstance(cond, IntLit), f"{cond=}"
-                expr = (
-                    Identifier(name="true") if cond.value else Identifier(name="false")
-                )
+                expr = Identifier(name="true") if cond.value else Identifier(name="false")
                 context = saved_ctx
-                break  # descend to evaluate chosen branch
+                break
 
             if tag == "intstr_after_inner":
                 x = value
