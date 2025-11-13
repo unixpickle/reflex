@@ -7,13 +7,6 @@ wrap_int = {
   result = x.mod[y=256].result
 }
 
-# Override this to create a unit test, where conditions are
-# implemented in definitions 'a' through 'e'
-unit_test = {
-  a = 1, b = 1, c = 1, d = 1, e = 1
-  result = a.bit_and[y=^.b].result.bit_and[y=^.c].result.bit_and[y=^.d].result.bit_and[y=^.e].result
-}
-
 # A stack which is prefilled with infinite zeroes.
 Stack = {
   prefix = ^.Stack # infinite prefix of all 0's
@@ -183,6 +176,13 @@ Interpreter = {
       ].result
     ].result
   ].result
+}
+
+# Override this to create a unit test, where conditions are
+# implemented in definitions 'a' through 'e'
+unit_test = {
+  a = 1, b = 1, c = 1, d = 1, e = 1
+  result = a.bit_and[y=^.b].result.bit_and[y=^.c].result.bit_and[y=^.d].result.bit_and[y=^.e].result
 }
 
 # Classic hello world
