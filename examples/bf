@@ -1,12 +1,20 @@
+#########################
+# Brainf*ck interpreter #
+#########################
+
+# Helper to perform the wraparound logic in a memory cell
 wrap_int = {
   result = x.mod[y=256].result
 }
 
-big_and = {
+# Override this to create a unit test, where conditions are
+# implemented in definitions 'a' through 'e'
+unit_test = {
   a = 1, b = 1, c = 1, d = 1, e = 1
   result = a.bit_and[y=^.b].result.bit_and[y=^.c].result.bit_and[y=^.d].result.bit_and[y=^.e].result
 }
 
+# A stack which is prefilled with infinite zeroes.
 Stack = {
   prefix = ^.Stack # infinite prefix of all 0's
   item = 0
@@ -15,9 +23,14 @@ Stack = {
   }
 }
 
+# A bidirectional tape, represented as one stack to the left
+# and one to the right.
 Tape = {
   left = ^.Stack
   right = ^.Stack
+
+  # Current position of the tape is arbitrarily chosen to be the left's end
+  cur = left.item
 
   move_right = @[
     left = ^.left.push[x=^.^.right.item].result
@@ -28,26 +41,27 @@ Tape = {
     right = ^.right.push[x=^.^.left.item].result
   ]
 
-  _cur = left.item
   increment = @[
-    left = ^.left[item=^^.wrap_int[x=^^._cur.add[y=1].result].result]
+    left = ^.left[item=^^.wrap_int[x=^^.cur.add[y=1].result].result]
   ]
   decrement = @[
-    left = ^.left[item=^^.wrap_int[x=^^._cur.sub[y=1].result].result]
+    left = ^.left[item=^^.wrap_int[x=^^.cur.sub[y=1].result].result]
   ]
 
-  test = ^^.big_and[
-    # Unit test for moving around the tape; test.result should be 1.
+  # Unit test for moving around the tape; test.result should be 1.
+  test = ^^.unit_test[
     t = ^^.Tape.increment.move_right.increment.increment.move_left.move_left
-    a = t._cur.eq[y=0].result
-    b = t.move_right._cur.eq[y=1].result
-    c = t.move_right.move_right._cur.eq[y=2].result
-    d = t.move_right.move_right.move_right._cur.eq[y=0].result
-    e = t.move_right.move_right.move_right.move_left._cur.eq[y=2].result
+    a = t.cur.eq[y=0].result
+    b = t.move_right.cur.eq[y=1].result
+    c = t.move_right.move_right.cur.eq[y=2].result
+    d = t.move_right.move_right.move_right.cur.eq[y=0].result
+    e = t.move_right.move_right.move_right.move_left.cur.eq[y=2].result
   ]
 }
 
-Program = { # argument: code
+# Representation of the program source and the current instruction pointer.
+# Override the 'code' definition to pass the program source as a string.
+Program = {
   ip = 0 # instruction pointer
 
   cur_inst = code.substr[start=^.ip end=^.ip.add[y=1].result].result
@@ -96,7 +110,8 @@ Program = { # argument: code
     ].result
   }
 
-  test = ^^.big_and[
+  # Unit test for matching brackets; result is 1 when passed. 
+  test = ^^.unit_test[
     p = ^^.Program[code=".[.[..]<><>[]].[]"]
     a = p.cur_inst.eq[y="."].result
     b = p.advanced.match_open.ip.eq[y=14].result
@@ -106,4 +121,72 @@ Program = { # argument: code
   ]
 }
 
-result = Program.test.result
+# A code interpreter, which represents the current program state.
+# Use the 'result' definition to get the terminated interpreter state,
+# which will have accumulated output in the 'output' definition.
+Interpreter = {
+  program = ^^.Program[code=^.code]
+  tape = ^^.Tape
+  output = ""
+
+  is_open_bracket = program.cur_inst.eq[y="["].result
+  is_close_bracket = program.cur_inst.eq[y="]"].result
+  is_lt = program.cur_inst.eq[y="<"].result
+  is_gt = program.cur_inst.eq[y=">"].result
+  is_plus = program.cur_inst.eq[y="+"].result
+  is_minus = program.cur_inst.eq[y="-"].result
+  is_dot = program.cur_inst.eq[y="."].result
+  is_done = program.cur_inst.eq[y=""].result
+
+  stop = @
+  step = @[program=^.program.advanced]
+  run_lt = step[tape=^.tape.move_left]
+  run_gt = step[tape=^.tape.move_right]
+  run_minus = step[tape=^.tape.decrement]
+  run_plus = step[tape=^.tape.increment]
+  run_dot = step[output=^.output.cat[y=^^.tape.cur.chr].result]
+  run_open_bracket = @[
+    program = ^.tape.cur.select[
+      false = ^.^.program.match_open
+      true = ^.^.program.advanced
+    ].result
+  ]
+  run_close_bracket = @[
+    program = ^.tape.cur.select[
+      false = ^.^.program.advanced
+      true = ^.^.program.match_close
+    ].result
+  ]
+
+  result = is_open_bracket.select[
+    true = ^^.run_open_bracket.result
+    false = ^^.is_close_bracket.select[
+      true = ^^.run_close_bracket.result
+      false = ^^.is_lt.select[
+        true = ^^.run_lt.result
+        false = ^^.is_gt.select[
+          true = ^^.run_gt.result
+          false = ^^.is_plus.select[
+            true = ^^.run_plus.result
+            false = ^^.is_minus.select[
+              true = ^^.run_minus.result
+              false = ^^.is_dot.select[
+                true = ^^.run_dot.result
+                false = ^^.is_done.select[
+                  false = ^^.step.result
+                  true = ^^.stop
+                ].result
+              ].result
+            ].result
+          ].result
+        ].result
+      ].result
+    ].result
+  ].result
+}
+
+# Classic hello world
+result = Interpreter[code="++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>."].result.output
+
+# Below example prints 2*2 = "\x04"
+# result = Interpreter[code="++[->++<]>."].result.output

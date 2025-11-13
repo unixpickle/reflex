@@ -35,6 +35,11 @@ class IntStr(BuiltInFn):
 
 
 @dataclass
+class IntChr(BuiltInFn):
+    pass
+
+
+@dataclass
 class Select(BuiltInFn):
     pass
 
@@ -67,6 +72,7 @@ def int_to_block(node: IntLit) -> Block:
             bit_or=int_op_block(result, lambda x, y: x | y),
             bit_xor=int_op_block(result, lambda x, y: x ^ y),
             str=IntStr(),
+            chr=IntChr(),
             select=Block(
                 defs=dict(
                     cond=BackEdge(base=result),
@@ -293,6 +299,12 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             expr = Identifier(name="_inner")
             continue
 
+        if isinstance(expr, IntChr):
+            # Evaluate _inner, then convert to string block.
+            stack.append(("intchr_after_inner",))
+            expr = Identifier(name="_inner")
+            continue
+
         if isinstance(expr, StrCat):
             # Evaluate x._inner then y._inner, then concatenate.
             stack.append(("strcat_after_x", context))
@@ -392,6 +404,12 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 x = value
                 assert isinstance(x, IntLit), f"{x=}"
                 value = str_to_block(StringLit(value=str(x.value)))
+                continue
+
+            if tag == "intchr_after_inner":
+                x = value
+                assert isinstance(x, IntLit), f"{x=}"
+                value = str_to_block(StringLit(value=chr(x.value)))
                 continue
 
             if tag == "strcat_after_x":
