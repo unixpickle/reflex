@@ -1,0 +1,109 @@
+wrap_int = {
+  result = x.mod[y=256].result
+}
+
+big_and = {
+  a = 1, b = 1, c = 1, d = 1, e = 1
+  result = a.bit_and[y=^.b].result.bit_and[y=^.c].result.bit_and[y=^.d].result.bit_and[y=^.e].result
+}
+
+Stack = {
+  prefix = ^.Stack # infinite prefix of all 0's
+  item = 0
+  push = { # argument: x
+    result = ^^.Stack[prefix=^.^, item=^.x]
+  }
+}
+
+Tape = {
+  left = ^.Stack
+  right = ^.Stack
+
+  move_right = @[
+    left = ^.left.push[x=^.^.right.item].result
+    right = ^.right.prefix
+  ]
+  move_left = @[
+    left = ^.left.prefix
+    right = ^.right.push[x=^.^.left.item].result
+  ]
+
+  _cur = left.item
+  increment = @[
+    left = ^.left[item=^^.wrap_int[x=^^._cur.add[y=1].result].result]
+  ]
+  decrement = @[
+    left = ^.left[item=^^.wrap_int[x=^^._cur.sub[y=1].result].result]
+  ]
+
+  test = ^^.big_and[
+    # Unit test for moving around the tape; test.result should be 1.
+    t = ^^.Tape.increment.move_right.increment.increment.move_left.move_left
+    a = t._cur.eq[y=0].result
+    b = t.move_right._cur.eq[y=1].result
+    c = t.move_right.move_right._cur.eq[y=2].result
+    d = t.move_right.move_right.move_right._cur.eq[y=0].result
+    e = t.move_right.move_right.move_right.move_left._cur.eq[y=2].result
+  ]
+}
+
+Program = { # argument: code
+  ip = 0 # instruction pointer
+
+  cur_inst = code.substr[start=^.ip end=^.ip.add[y=1].result].result
+  advanced = @[ip=^.ip.add[y=1].result]
+  rewound = @[ip=^.ip.sub[y=1].result]
+
+  # Jump to a matching close bracket for an open bracket, then advance.
+  match_open = _match_open.result
+  _match_open = {
+    depth = 0
+
+    on_open = ^.advanced._match_open[depth=^.depth.add[y=1].result].result
+    on_close = depth.le[y=1].result.select[
+      true = ^^.advanced
+      false = ^^.advanced._match_open[depth=^.^.depth.sub[y=1].result].result
+    ].result
+    on_other = ^^.advanced._match_open[depth=^.depth].result
+
+    result = ^^.cur_inst.eq[y="["].result.select[
+      true = ^^.on_open
+      false = ^^.cur_inst.eq[y="]"].result.select[
+        true = ^^.on_close
+        false = ^^.on_other
+      ].result
+    ].result
+  }
+
+  # Jump to a matching open bracket for a close bracket, then advance.
+  match_close = _match_close.result
+  _match_close = {
+    depth = 0
+
+    on_close = ^.rewound._match_close[depth=^.depth.add[y=1].result].result
+    on_open = depth.le[y=1].result.select[
+      true = ^^.advanced
+      false = ^^.rewound._match_close[depth=^.^.depth.sub[y=1].result].result
+    ].result
+    on_other = ^^.rewound._match_close[depth=^.depth].result
+
+    result = ^^.cur_inst.eq[y="]"].result.select[
+      true = ^^.on_close
+      false = ^^.cur_inst.eq[y="["].result.select[
+        true = ^^.on_open
+        false = ^^.on_other
+      ].result
+    ].result
+  }
+
+  test = ^^.big_and[
+    p = ^^.Program[code=".[.[..]<><>[]].[]"]
+    a = p.cur_inst.eq[y="."].result
+    b = p.advanced.match_open.ip.eq[y=14].result
+    c = p.advanced.advanced.advanced.match_open.ip.eq[y=7].result
+    d = p.advanced.advanced.advanced.match_open.rewound.match_close.ip.eq[y=4].result
+    e = p[ip=13].match_close.ip.eq[y=2].result
+  ]
+}
+
+result = Program.test.result

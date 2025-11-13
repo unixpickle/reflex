@@ -54,10 +54,18 @@ def int_to_block(node: IntLit) -> Block:
     result.defs.update(
         dict(
             add=int_op_block(result, lambda x, y: x + y),
+            sub=int_op_block(result, lambda x, y: x - y),
             eq=int_op_block(result, lambda x, y: int(x == y)),
+            lt=int_op_block(result, lambda x, y: int(x < y)),
+            gt=int_op_block(result, lambda x, y: int(x > y)),
+            le=int_op_block(result, lambda x, y: int(x <= y)),
+            ge=int_op_block(result, lambda x, y: int(x >= y)),
             mul=int_op_block(result, lambda x, y: x * y),
             div=int_op_block(result, lambda x, y: x // y),
             mod=int_op_block(result, lambda x, y: x % y),
+            bit_and=int_op_block(result, lambda x, y: x & y),
+            bit_or=int_op_block(result, lambda x, y: x | y),
+            bit_xor=int_op_block(result, lambda x, y: x ^ y),
             str=IntStr(),
             select=Block(
                 defs=dict(
@@ -85,6 +93,11 @@ class StrLen(BuiltInFn):
     pass
 
 
+@dataclass
+class StrSubstr(BuiltInFn):
+    pass
+
+
 def str_to_block(node: StringLit) -> Block:
     assert isinstance(node, StringLit)
     result = Block(defs=dict(_inner=node))
@@ -106,6 +119,14 @@ def str_to_block(node: StringLit) -> Block:
                 defs=dict(
                     x=BackEdge(base=result),
                     result=StrLen(),
+                )
+            ),
+            substr=Block(
+                defs=dict(
+                    x=BackEdge(base=result),
+                    start=int_to_block(IntLit(value=0)),
+                    end=StrLen(),
+                    result=StrSubstr(),
                 )
             ),
         )
@@ -290,6 +311,12 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             expr = Access(base=Identifier(name="x"), attr="_inner")
             continue
 
+        if isinstance(expr, StrSubstr):
+            # Evaluate x._inner, then start._inner, then end._inner; slice s[start:end].
+            stack.append(("strsubstr_after_x", context))
+            expr = Access(base=Identifier(name="x"), attr="_inner")
+            continue
+
         if isinstance(expr, SelfRef):
             value: Node = context
         else:
@@ -400,6 +427,36 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 assert isinstance(x, StringLit), f"{x=}"
                 # If your StringLit stores the raw string elsewhere, adjust accordingly.
                 value = int_to_block(IntLit(value=len(x.value)))
+                continue
+
+            if tag == "strsubstr_after_x":
+                (saved_ctx,) = rest
+                x = value
+                assert isinstance(x, StringLit), f"{x=}"
+                # Next, evaluate start._inner
+                stack.append(("strsubstr_after_start", x, saved_ctx))
+                expr = Access(base=Identifier(name="start"), attr="_inner")
+                break  # descend to evaluate start
+
+            if tag == "strsubstr_after_start":
+                x, saved_ctx = rest
+                start = value
+                assert isinstance(start, IntLit), f"{start=}"
+                # Next, evaluate end._inner
+                stack.append(("strsubstr_apply", x, start, saved_ctx))
+                expr = Access(base=Identifier(name="end"), attr="_inner")
+                break  # descend to evaluate end
+
+            if tag == "strsubstr_apply":
+                x, start, saved_ctx = rest
+                end = value
+                assert isinstance(x, StringLit), f"{x=}"
+                assert isinstance(start, IntLit), f"{start=}"
+                assert isinstance(end, IntLit), f"{end=}"
+                # Inclusive start, exclusive end
+                substr = x.value[start.value : end.value]
+                value = str_to_block(StringLit(value=substr))
+                context = saved_ctx
                 continue
 
             raise RuntimeError(f"unknown continuation frame: {tag}")
