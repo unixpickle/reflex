@@ -160,7 +160,7 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return Access(base=preprocess(parents, expr.base), attr=expr.attr)
     elif isinstance(expr, AncestorLookup):
         found_parent = None
-        for parent in parents[::-1]:
+        for parent in parents[:-1][::-1]:
             assert isinstance(parent, (Override, Block))
             try:
                 block_get(parent, expr.name)

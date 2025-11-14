@@ -1,0 +1,20 @@
+## Get an arbitrary fibonacci number
+
+# Any object with a next attribute.
+Stream = {
+  # Call next n times and get the result
+  after = {
+    result = n.select[
+      false = ^.^
+      true = ^.^.next.after[n=^.^.n.sub[y=1].result].result
+    ].result
+  }
+}
+
+Fib = Stream[
+  a = 1
+  b = 1
+  next = @[a=^.b b=^.a.add[y=^.^.b].result]
+]
+
+result = Fib.after[n=30].result.b

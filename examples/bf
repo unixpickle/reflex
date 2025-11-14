@@ -69,7 +69,7 @@ Program = {
     on_open = ^.advanced._match_open[depth=^.depth.add[y=1].result].result
     on_close = depth.le[y=1].result.select[
       true = ^^.advanced
-      false = ^^.advanced._match_open[depth=^.^.depth.sub[y=1].result].result
+      false = ^^.advanced._match_open[depth=^^.depth.sub[y=1].result].result
     ].result
     on_other = ^^.advanced._match_open[depth=^.depth].result
 
@@ -90,7 +90,7 @@ Program = {
     on_close = ^.rewound._match_close[depth=^.depth.add[y=1].result].result
     on_open = depth.le[y=1].result.select[
       true = ^^.advanced
-      false = ^^.rewound._match_close[depth=^.^.depth.sub[y=1].result].result
+      false = ^^.rewound._match_close[depth=^^.depth.sub[y=1].result].result
     ].result
     on_other = ^^.rewound._match_close[depth=^.depth].result
 

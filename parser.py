@@ -285,7 +285,7 @@ class Parser:
         elif self.peek().typ == "DOLLAR":
             name = self.expect("DOLLAR").val
         else:
-            raise ParseError("ident expected")
+            raise ParseError(f"ident expected {self.peek_position()}")
         self.expect("=")
         expr = self.parse_expr()
         return Definition(name, expr)
