@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from lexer import tokenize
 
 
 class Node:
@@ -59,177 +60,8 @@ class Definition:
     expr: Node
 
 
-# =========================
-#         LEXER
-# =========================
-
-
-class Token:
-    def __init__(self, typ, val, line=0, col=0):
-        self.typ = typ
-        self.val = val
-        self.line = line
-        self.col = col
-
-    def __repr__(self):
-        return f"Token({self.typ},{self.val})"
-
-
-class LexError(Exception):
-    pass
-
-
 class ParseError(Exception):
     pass
-
-
-def tokenize(src: str):
-    tokens = []
-    i = 0
-    line = 1
-    col = 1
-
-    def adv(n=1):
-        nonlocal i, line, col
-        for _ in range(n):
-            if i < len(src) and src[i] == "\n":
-                line += 1
-                col = 1
-            else:
-                col += 1
-            i += 1
-
-    def add(typ, val):
-        tokens.append(Token(typ, val, line, col))
-
-    def peek(k=0):
-        return src[i + k] if i + k < len(src) else ""
-
-    while i < len(src):
-        ch = src[i]
-
-        # whitespace
-        if ch in " \t\r":
-            adv()
-            continue
-
-        # newline -> explicit NEWLINE token
-        if ch == "\n":
-            add("NEWLINE", "\n")
-            adv()
-            continue
-
-        # strings: "..." or '...'
-        if ch == '"' or ch == "'":
-            quote = ch
-            j = i + 1
-            buf = []
-            escape = False
-            start_line, start_col = line, col
-            while j < len(src):
-                c = src[j]
-                if escape:
-                    if c == "n":
-                        buf.append("\n")
-                    elif c == "t":
-                        buf.append("\t")
-                    elif c == "r":
-                        buf.append("\r")
-                    elif c == "\\":
-                        buf.append("\\")
-                    elif c == '"':
-                        buf.append('"')
-                    elif c == "'":
-                        buf.append("'")
-                    else:
-                        buf.append("\\")
-                        buf.append(c)
-                    escape = False
-                    j += 1
-                    continue
-                if c == "\\":
-                    escape = True
-                    j += 1
-                    continue
-                if c == quote:
-                    add("STRING", "".join(buf))
-                    adv(j - i + 1)  # past closing quote
-                    break
-                if c == "\n":
-                    raise LexError(
-                        f"Unterminated string starting at {start_line}:{start_col}"
-                    )
-                buf.append(c)
-                j += 1
-            else:
-                raise LexError(
-                    f"Unterminated string starting at {start_line}:{start_col}"
-                )
-            continue
-
-        # line comments starting with '#': skip until (but not including) newline
-        if ch == "#":
-            while i < len(src) and src[i] != "\n":
-                adv()
-            continue
-
-        # explicit error for removed ancestor operator
-        if ch == "^" and peek(1) == "^":
-            add("ANCESTOR", "^^")
-            adv(2)
-            continue
-
-        # single-char punctuation
-        if ch in "{}[].=,;":
-            add(ch, ch)
-            adv()
-            continue
-
-        # special sigils
-        if ch == "^":
-            add("PARENT", "^")
-            adv()
-            continue
-        if ch == "@":
-            add("SELF", "@")
-            adv()
-            continue
-        if ch == "$":
-            add("DOLLAR", "$")
-            adv()
-            continue
-
-        # integers (allow leading minus)
-        if ch.isdigit() or (ch == "-" and peek(1).isdigit()):
-            j = i + 1
-            if ch == "-":
-                j = i + 2
-            while j < len(src) and src[j].isdigit():
-                j += 1
-            val = src[i:j]
-            add("INT", val)
-            adv(len(val))
-            continue
-
-        # identifiers
-        if ch.isalpha() or ch == "_":
-            j = i + 1
-            while j < len(src) and (src[j].isalnum() or src[j] == "_"):
-                j += 1
-            val = src[i:j]
-            add("IDENT", val)
-            adv(len(val))
-            continue
-
-        raise LexError(f"Unexpected {ch!r} at {line}:{col}")
-
-    tokens.append(Token("EOF", "", line, col))
-    return tokens
-
-
-# =========================
-#         PARSER
-# =========================
 
 
 class Parser:
@@ -248,11 +80,11 @@ class Parser:
             return tok
         return None
 
-    def expect(self, typ):
-        tok = self.match(typ)
+    def expect(self, *types):
+        tok = self.match(*types)
         if not tok:
             raise ParseError(
-                f"Expected {typ}, got {self.peek().typ} at {self.peek_position()}"
+                f"Expected {types}, got {self.peek().typ} at {self.peek_position()}"
             )
         return tok
 
@@ -264,28 +96,12 @@ class Parser:
             self.k += 1
 
     def parse_module(self) -> Block:
-        defs = {}
-        self.consume_delims()
-        while self.peek().typ not in {"EOF"}:
-            if self.peek().typ not in {"IDENT", "DOLLAR"}:
-                break
-            d = self.parse_definition()
-            if d.name in defs:
-                raise ParseError(
-                    f"Redefinition of {d.name!r} at {self.peek_position()}"
-                )
-            defs[d.name] = d.expr
-            self.consume_delims()
+        defs = self.parse_defs_until({"EOF"})
         self.expect("EOF")
         return Block(defs)
 
     def parse_definition(self) -> Definition:
-        if self.peek().typ == "IDENT":
-            name = self.expect("IDENT").val
-        elif self.peek().typ == "DOLLAR":
-            name = self.expect("DOLLAR").val
-        else:
-            raise ParseError(f"ident expected {self.peek_position()}")
+        name = self.expect("IDENT", "DOLLAR").val
         self.expect("=")
         expr = self.parse_expr()
         return Definition(name, expr)
@@ -294,11 +110,10 @@ class Parser:
         defs = {}
         self.consume_delims()
         while self.peek().typ not in stop:
+            start = self.peek_position()
             d = self.parse_definition()
             if d.name in defs:
-                raise ParseError(
-                    f"Redefinition of {d.name!r} at {self.peek_position()}"
-                )
+                raise ParseError(f"Redefinition of {d.name!r} at {start}")
             defs[d.name] = d.expr
             self.consume_delims()
         return defs
@@ -306,65 +121,49 @@ class Parser:
     def parse_expr(self) -> Node:
         node = self.parse_primary()
         while True:
+            start = self.peek_position()
             if self.match("."):
                 if self.match("PARENT"):
                     if isinstance(node, Parent):
                         node = Parent(node.depth + 1)
                     else:
-                        raise ParseError(
-                            "expected ^ accesses to be chained with each other"
-                        )
+                        raise ParseError("Unexpected ^ operator at {start}")
                     continue
-                if self.peek().typ == "IDENT":
-                    attr = self.expect("IDENT").val
-                elif self.peek().typ == "DOLLAR":
-                    attr = self.expect("DOLLAR").val
-                else:
-                    raise ParseError("property name expected after '.'")
+                attr = self.expect("IDENT", "DOLLAR").val
                 node = Access(node, attr)
-                continue
-            if self.peek().typ == "[":
+            elif self.peek().typ == "[":
                 self.expect("[")
                 defs = self.parse_defs_until({"]"})
                 self.expect("]")
                 node = Override(node, defs)
-                continue
-            break
+            else:
+                break
         return node
 
     def parse_primary(self) -> Node:
-        t = self.peek()
-        if t.typ == "{":
-            self.expect("{")
+        start_pos = self.peek_position()
+        token = self.expect(
+            "{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT", "DOLLAR"
+        )
+        if token.typ == "{":
             defs = self.parse_defs_until({"}"})
             self.expect("}")
             return Block(defs)
-        if t.typ == "INT":
-            return IntLit(int(self.expect("INT").val))
-        if t.typ == "STRING":
-            return StringLit(self.expect("STRING").val)
-        if t.typ == "SELF":
-            self.expect("SELF")
+        elif token.typ == "INT":
+            return IntLit(int(token.val))
+        elif token.typ == "STRING":
+            return StringLit(token.val)
+        elif token.typ == "SELF":
             return SelfRef()
-        if t.typ == "PARENT":
-            self.expect("PARENT")
+        elif token.typ == "PARENT":
             return Parent(1)
-        if t.typ == "ANCESTOR":
-            self.expect("ANCESTOR")
+        elif token.typ == "ANCESTOR":
             self.expect(".")
-            if self.peek().typ == "IDENT":
-                name = self.expect("IDENT").val
-            elif self.peek().typ == "DOLLAR":
-                name = self.expect("DOLLAR").val
-            else:
-                raise ParseError("name expected after '^^.'")
+            name = self.expect("IDENT", "DOLLAR").val
             return AncestorLookup(name)
-        if t.typ == "IDENT":
-            return Identifier(self.expect("IDENT").val)
-        if t.typ == "DOLLAR":
-            self.expect("DOLLAR")
-            return Identifier("$")
-        raise ParseError(f"Unexpected token {t.typ}")
+        elif token.typ in ("IDENT", "DOLLAR"):
+            return Identifier(token.val)
+        raise ParseError(f"Unexpected token {token.typ} at {start_pos}")
 
 
 def parse_module(code: str):
