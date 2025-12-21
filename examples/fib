@@ -6,15 +6,15 @@ Stream = {
   after = {
     result = n.select[
       false = ^.^
-      true = ^.^.next.after[n=^.^.n.sub[y=1].result].result
-    ].result
+      true = ^.^.next.after[n=^.^.n.sub[y=1]!]!
+    ]!
   }
 }
 
 Fib = Stream[
   a = 1
   b = 1
-  next = @[a=^.b b=^.a.add[y=^.^.b].result]
+  next = @[a=^.b b=^.a.add[y=^.^.b]!]
 ]
 
-result = Fib.after[n=30].result.b
+result = Fib.after[n=30]!.b

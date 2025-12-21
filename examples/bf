@@ -4,7 +4,7 @@
 
 # Helper to perform the wraparound logic in a memory cell
 wrap_int = {
-  result = x.mod[y=256].result
+  result = x.mod[y=256]!
 }
 
 # A stack which is prefilled with infinite zeroes.
@@ -26,29 +26,29 @@ Tape = {
   cur = left.item
 
   move_right = @[
-    left = ^.left.push[x=^.^.right.item].result
+    left = ^.left.push[x=^.^.right.item]!
     right = ^.right.prefix
   ]
   move_left = @[
     left = ^.left.prefix
-    right = ^.right.push[x=^.^.left.item].result
+    right = ^.right.push[x=^.^.left.item]!
   ]
 
   increment = @[
-    left = ^.left[item=^^.wrap_int[x=^^.cur.add[y=1].result].result]
+    left = ^.left[item=^^.wrap_int[x=^^.cur.add[y=1]!]!]
   ]
   decrement = @[
-    left = ^.left[item=^^.wrap_int[x=^^.cur.sub[y=1].result].result]
+    left = ^.left[item=^^.wrap_int[x=^^.cur.sub[y=1]!]!]
   ]
 
-  # Unit test for moving around the tape; test.result should be 1.
+  # Unit test for moving around the tape; test! should be 1.
   test = ^^.unit_test[
     t = ^^.Tape.increment.move_right.increment.increment.move_left.move_left
-    a = t.cur.eq[y=0].result
-    b = t.move_right.cur.eq[y=1].result
-    c = t.move_right.move_right.cur.eq[y=2].result
-    d = t.move_right.move_right.move_right.cur.eq[y=0].result
-    e = t.move_right.move_right.move_right.move_left.cur.eq[y=2].result
+    a = t.cur.eq[y=0]!
+    b = t.move_right.cur.eq[y=1]!
+    c = t.move_right.move_right.cur.eq[y=2]!
+    d = t.move_right.move_right.move_right.cur.eq[y=0]!
+    e = t.move_right.move_right.move_right.move_left.cur.eq[y=2]!
   ]
 }
 
@@ -57,60 +57,60 @@ Tape = {
 Program = {
   ip = 0 # instruction pointer
 
-  cur_inst = code.substr[start=^.ip end=^.ip.add[y=1].result].result
-  advanced = @[ip=^.ip.add[y=1].result]
-  rewound = @[ip=^.ip.sub[y=1].result]
+  cur_inst = code.substr[start=^.ip end=^.ip.add[y=1]!]!
+  advanced = @[ip=^.ip.add[y=1]!]
+  rewound = @[ip=^.ip.sub[y=1]!]
 
   # Jump to a matching close bracket for an open bracket, then advance.
-  match_open = _match_open.result
+  match_open = _match_open!
   _match_open = {
     depth = 0
 
-    on_open = ^.advanced._match_open[depth=^.depth.add[y=1].result].result
-    on_close = depth.le[y=1].result.select[
+    on_open = ^.advanced._match_open[depth=^.depth.add[y=1]!]!
+    on_close = depth.le[y=1]!.select[
       true = ^^.advanced
-      false = ^^.advanced._match_open[depth=^^.depth.sub[y=1].result].result
-    ].result
-    on_other = ^^.advanced._match_open[depth=^.depth].result
+      false = ^^.advanced._match_open[depth=^^.depth.sub[y=1]!]!
+    ]!
+    on_other = ^^.advanced._match_open[depth=^.depth]!
 
-    result = ^^.cur_inst.eq[y="["].result.select[
+    result = ^^.cur_inst.eq[y="["]!.select[
       true = ^^.on_open
-      false = ^^.cur_inst.eq[y="]"].result.select[
+      false = ^^.cur_inst.eq[y="]"]!.select[
         true = ^^.on_close
         false = ^^.on_other
-      ].result
-    ].result
+      ]!
+    ]!
   }
 
   # Jump to a matching open bracket for a close bracket, then advance.
-  match_close = _match_close.result
+  match_close = _match_close!
   _match_close = {
     depth = 0
 
-    on_close = ^.rewound._match_close[depth=^.depth.add[y=1].result].result
-    on_open = depth.le[y=1].result.select[
+    on_close = ^.rewound._match_close[depth=^.depth.add[y=1]!]!
+    on_open = depth.le[y=1]!.select[
       true = ^^.advanced
-      false = ^^.rewound._match_close[depth=^^.depth.sub[y=1].result].result
-    ].result
-    on_other = ^^.rewound._match_close[depth=^.depth].result
+      false = ^^.rewound._match_close[depth=^^.depth.sub[y=1]!]!
+    ]!
+    on_other = ^^.rewound._match_close[depth=^.depth]!
 
-    result = ^^.cur_inst.eq[y="]"].result.select[
+    result = ^^.cur_inst.eq[y="]"]!.select[
       true = ^^.on_close
-      false = ^^.cur_inst.eq[y="["].result.select[
+      false = ^^.cur_inst.eq[y="["]!.select[
         true = ^^.on_open
         false = ^^.on_other
-      ].result
-    ].result
+      ]!
+    ]!
   }
 
   # Unit test for matching brackets; result is 1 when passed. 
   test = ^^.unit_test[
     p = ^^.Program[code=".[.[..]<><>[]].[]"]
-    a = p.cur_inst.eq[y="."].result
-    b = p.advanced.match_open.ip.eq[y=14].result
-    c = p.advanced.advanced.advanced.match_open.ip.eq[y=7].result
-    d = p.advanced.advanced.advanced.match_open.rewound.match_close.ip.eq[y=4].result
-    e = p[ip=13].match_close.ip.eq[y=2].result
+    a = p.cur_inst.eq[y="."]!
+    b = p.advanced.match_open.ip.eq[y=14]!
+    c = p.advanced.advanced.advanced.match_open.ip.eq[y=7]!
+    d = p.advanced.advanced.advanced.match_open.rewound.match_close.ip.eq[y=4]!
+    e = p[ip=13].match_close.ip.eq[y=2]!
   ]
 }
 
@@ -122,14 +122,14 @@ Interpreter = {
   tape = ^^.Tape
   output = ""
 
-  is_open_bracket = program.cur_inst.eq[y="["].result
-  is_close_bracket = program.cur_inst.eq[y="]"].result
-  is_lt = program.cur_inst.eq[y="<"].result
-  is_gt = program.cur_inst.eq[y=">"].result
-  is_plus = program.cur_inst.eq[y="+"].result
-  is_minus = program.cur_inst.eq[y="-"].result
-  is_dot = program.cur_inst.eq[y="."].result
-  is_done = program.cur_inst.eq[y=""].result
+  is_open_bracket = program.cur_inst.eq[y="["]!
+  is_close_bracket = program.cur_inst.eq[y="]"]!
+  is_lt = program.cur_inst.eq[y="<"]!
+  is_gt = program.cur_inst.eq[y=">"]!
+  is_plus = program.cur_inst.eq[y="+"]!
+  is_minus = program.cur_inst.eq[y="-"]!
+  is_dot = program.cur_inst.eq[y="."]!
+  is_done = program.cur_inst.eq[y=""]!
 
   stop = @
   step = @[program=^.program.advanced]
@@ -137,56 +137,56 @@ Interpreter = {
   run_gt = step[tape=^.tape.move_right]
   run_minus = step[tape=^.tape.decrement]
   run_plus = step[tape=^.tape.increment]
-  run_dot = step[output=^.output.cat[y=^^.tape.cur.chr].result]
+  run_dot = step[output=^.output.cat[y=^^.tape.cur.chr]!]
   run_open_bracket = @[
     program = ^.tape.cur.select[
       false = ^.^.program.match_open
       true = ^.^.program.advanced
-    ].result
+    ]!
   ]
   run_close_bracket = @[
     program = ^.tape.cur.select[
       false = ^.^.program.advanced
       true = ^.^.program.match_close
-    ].result
+    ]!
   ]
 
   result = is_open_bracket.select[
-    true = ^^.run_open_bracket.result
+    true = ^^.run_open_bracket!
     false = ^^.is_close_bracket.select[
-      true = ^^.run_close_bracket.result
+      true = ^^.run_close_bracket!
       false = ^^.is_lt.select[
-        true = ^^.run_lt.result
+        true = ^^.run_lt!
         false = ^^.is_gt.select[
-          true = ^^.run_gt.result
+          true = ^^.run_gt!
           false = ^^.is_plus.select[
-            true = ^^.run_plus.result
+            true = ^^.run_plus!
             false = ^^.is_minus.select[
-              true = ^^.run_minus.result
+              true = ^^.run_minus!
               false = ^^.is_dot.select[
-                true = ^^.run_dot.result
+                true = ^^.run_dot!
                 false = ^^.is_done.select[
-                  false = ^^.step.result
+                  false = ^^.step!
                   true = ^^.stop
-                ].result
-              ].result
-            ].result
-          ].result
-        ].result
-      ].result
-    ].result
-  ].result
+                ]!
+              ]!
+            ]!
+          ]!
+        ]!
+      ]!
+    ]!
+  ]!
 }
 
 # Override this to create a unit test, where conditions are
 # implemented in definitions 'a' through 'e'
 unit_test = {
   a = 1, b = 1, c = 1, d = 1, e = 1
-  result = a.bit_and[y=^.b].result.bit_and[y=^.c].result.bit_and[y=^.d].result.bit_and[y=^.e].result
+  result = a.bit_and[y=^.b]!.bit_and[y=^.c]!.bit_and[y=^.d]!.bit_and[y=^.e]!
 }
 
 # Classic hello world
-result = Interpreter[code=">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+."].result.output
+result = Interpreter[code=">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+."]!.output
 
 # Below example prints 2*2 = "\x04"
-# result = Interpreter[code="++[->++<]>."].result.output
+# result = Interpreter[code="++[->++<]>."]!.output

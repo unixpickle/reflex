@@ -92,7 +92,7 @@ class Parser:
         return f"{self.peek().line}:{self.peek().col}"
 
     def consume_delims(self):
-        while self.peek().typ in {",", ";", "NEWLINE"}:
+        while self.peek().typ in {",", "NEWLINE"}:
             self.k += 1
 
     def parse_module(self) -> Block:
@@ -101,7 +101,7 @@ class Parser:
         return Block(defs)
 
     def parse_definition(self) -> Definition:
-        name = self.expect("IDENT", "DOLLAR").val
+        name = self.expect("IDENT").val
         self.expect("=")
         expr = self.parse_expr()
         return Definition(name, expr)
@@ -129,8 +129,10 @@ class Parser:
                     else:
                         raise ParseError("Unexpected ^ operator at {start}")
                     continue
-                attr = self.expect("IDENT", "DOLLAR").val
+                attr = self.expect("IDENT").val
                 node = Access(node, attr)
+            elif self.match("UNWRAP"):
+                node = Access(node, "result")
             elif self.peek().typ == "[":
                 self.expect("[")
                 defs = self.parse_defs_until({"]"})
@@ -143,7 +145,7 @@ class Parser:
     def parse_primary(self) -> Node:
         start_pos = self.peek_position()
         token = self.expect(
-            "{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT", "DOLLAR"
+            "{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT"
         )
         if token.typ == "{":
             defs = self.parse_defs_until({"}"})
@@ -159,9 +161,9 @@ class Parser:
             return Parent(1)
         elif token.typ == "ANCESTOR":
             self.expect(".")
-            name = self.expect("IDENT", "DOLLAR").val
+            name = self.expect("IDENT").val
             return AncestorLookup(name)
-        elif token.typ in ("IDENT", "DOLLAR"):
+        elif token.typ == "IDENT":
             return Identifier(token.val)
         raise ParseError(f"Unexpected token {token.typ} at {start_pos}")
 

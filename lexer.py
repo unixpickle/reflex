@@ -19,12 +19,12 @@ class Tokenizer:
         self.i = 0
         self.line = 1
         self.col = 1
-        punctuation = set("{}[].=,;")
+        punctuation = set("{}[].=,")
         self.singles = dict(zip(punctuation, punctuation)) | {
             "^": "PARENT",
             "@": "SELF",
-            "$": "DOLLAR",
             "\n": "NEWLINE",
+            "!": "UNWRAP",
         }
         self.whitespace = set(" \t\r")
 
