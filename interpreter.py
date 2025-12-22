@@ -5,6 +5,7 @@ from parser import (
     Access,
     AncestorLookup,
     Block,
+    Call,
     Identifier,
     IntLit,
     Node,
@@ -141,9 +142,9 @@ def str_to_block(node: StringLit) -> Block:
 
 
 def block_get(block: Block | Override, key: str) -> Node:
-    assert isinstance(block, (Block, Override)), (
-        f"cannot get key {key!r} of node type {type(block)}"
-    )
+    assert isinstance(
+        block, (Block, Override)
+    ), f"cannot get key {key!r} of node type {type(block)}"
     if key in block.defs:
         return block.defs[key]
     raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
@@ -151,11 +152,13 @@ def block_get(block: Block | Override, key: str) -> Node:
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
     """
-    Replace Parent with BackEdge and wrap int literals in blocks.
+    Replace Parent with BackEdge and wrap literals in blocks.
     """
     if isinstance(expr, Parent):
         assert expr.depth + 1 <= len(parents)
         return BackEdge(base=parents[len(parents) - (expr.depth + 1)])
+    elif isinstance(expr, SelfRef):
+        return BackEdge(base=parents[-1])
     elif isinstance(expr, Access):
         return Access(base=preprocess(parents, expr.base), attr=expr.attr)
     elif isinstance(expr, AncestorLookup):
@@ -181,11 +184,16 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         o.defs = {k: None for k in expr.defs.keys()}  # temporary for ancestor lookup
         o.defs = {k: preprocess(parents + [o], v) for k, v in expr.defs.items()}
         return o
+    elif isinstance(expr, Call):
+        return Call(
+            base=preprocess(parents, expr.base),
+            defs={k: preprocess(parents, v) for k, v in expr.defs.items()},
+        )
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
     elif isinstance(expr, StringLit):
         return str_to_block(expr)
-    elif isinstance(expr, (Identifier, SelfRef)):
+    elif isinstance(expr, Identifier):
         return expr
     else:
         raise ValueError(f"type {type(expr)} cannot fill parents")
@@ -213,10 +221,15 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
             k: _clone_blocks(v, result) for k, v in node.defs.items()
         }
         return result[id(node)]
+    elif isinstance(node, Call):
+        return Call(
+            base=_clone_blocks(node.base, result),
+            defs={k: _clone_blocks(v, result) for k, v in node.defs.items()},
+        )
     elif isinstance(node, BackEdge):
         # Copy the object so we can update the base later.
         return BackEdge(base=node.base)
-    elif isinstance(node, (SelfRef, IntLit, StringLit, Identifier, BuiltInFn)):
+    elif isinstance(node, (IntLit, StringLit, Identifier, BuiltInFn)):
         return node
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -228,14 +241,14 @@ def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
     elif isinstance(node, Block):
         for d in node.defs.values():
             _replace_back_edges(d, mapping)
-    elif isinstance(node, Override):
+    elif isinstance(node, (Call, Override)):
         _replace_back_edges(node.base, mapping)
         for d in node.defs.values():
             _replace_back_edges(d, mapping)
     elif isinstance(node, BackEdge):
         if id(node.base) in mapping:
             node.base = mapping[id(node.base)]
-    elif isinstance(node, (SelfRef, IntLit, StringLit, Identifier, BuiltInFn)):
+    elif isinstance(node, (IntLit, StringLit, Identifier, BuiltInFn)):
         pass
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -246,6 +259,7 @@ def clone_tree(node: Node) -> Node:
     new_node = _clone_blocks(node, copies)
     _replace_back_edges(new_node, copies)
     return new_node
+
 
 def evaluate_result(context: Block | Override, expr: Node) -> Node:
     """
@@ -262,7 +276,7 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
             expr = expr.base
             continue
 
-        if isinstance(expr, Override):
+        if isinstance(expr, (Call, Override)):
             stack.append(("override_after_base", expr))
             expr = expr.base
             continue
@@ -414,7 +428,9 @@ def evaluate_result(context: Block | Override, expr: Node) -> Node:
                 (saved_ctx,) = rest
                 cond = value
                 assert isinstance(cond, IntLit), f"{cond=}"
-                expr = Identifier(name="true") if cond.value else Identifier(name="false")
+                expr = (
+                    Identifier(name="true") if cond.value else Identifier(name="false")
+                )
                 context = saved_ctx
                 break
 

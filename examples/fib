@@ -4,17 +4,17 @@
 Stream = {
   # Call next n times and get the result
   after = {
-    result = n.select[
-      false = ^.^
-      true = ^.^.next.after[n=^.^.n.sub[y=1]!]!
-    ]!
+    result = n.select(
+      false = ^
+      true = ^.next.after(n=@.n.sub[y=1]!)!
+    )!
   }
 }
 
 Fib = Stream[
   a = 1
   b = 1
-  next = @[a=^.b b=^.a.add[y=^.^.b]!]
+  next = @(a=@.b b=@.a.add(y=@.b)!)
 ]
 
 result = Fib.after[n=30]!.b

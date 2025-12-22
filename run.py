@@ -2,6 +2,7 @@ import sys
 from interpreter import block_get, program_result
 from parser import parse_module
 
+
 def main():
     if len(sys.argv) != 2:
         print("Usage: python run_module.py <file>")
@@ -22,6 +23,7 @@ def main():
         result = result_block
 
     print(result)
+
 
 if __name__ == "__main__":
     main()

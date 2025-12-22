@@ -55,6 +55,12 @@ class Override(Node):
 
 
 @dataclass
+class Call(Node):
+    base: Node
+    defs: dict[str, Node]
+
+
+@dataclass
 class Definition:
     name: str
     expr: Node
@@ -138,15 +144,18 @@ class Parser:
                 defs = self.parse_defs_until({"]"})
                 self.expect("]")
                 node = Override(node, defs)
+            elif self.peek().typ == "(":
+                self.expect("(")
+                defs = self.parse_defs_until({")"})
+                self.expect(")")
+                node = Call(node, defs)
             else:
                 break
         return node
 
     def parse_primary(self) -> Node:
         start_pos = self.peek_position()
-        token = self.expect(
-            "{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT"
-        )
+        token = self.expect("{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT")
         if token.typ == "{":
             defs = self.parse_defs_until({"}"})
             self.expect("}")
