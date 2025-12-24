@@ -4,16 +4,16 @@ factors = {
   input = x # x is passed as an argument
   f = 2 # the current guess for a factor
 
-  result_if_not_divisible = @[f=^.f.add[y=1]!]!
-  result_if_divisible = @[x=^^.input.div[y=^^.f]! f=2]!
-  is_prime = input.eq[y=^.f]!
-  is_not_divisible = input.mod[y=^.f]!
-  result = is_prime.select[
-    true=^.x.str
-    false=^.is_not_divisible.select[
-      true=^^.result_if_not_divisible
-      false=^^.f.str.cat[y=" "]!.cat[y=^^.result_if_divisible]!
-    ]!
-  ]!
+  result_if_not_divisible = @(f=f.add(y=1)!)!
+  result_if_divisible = @(x=input.div(y=f)! f=2)!
+  is_prime = input.eq(y=f)!
+  is_not_divisible = input.mod(y=f)!
+  result = is_prime.select(
+    true=x.str
+    false=is_not_divisible.select(
+      true=result_if_not_divisible
+      false=f.str.cat(y=" ")!.cat(y=result_if_divisible)!
+    )!
+  )!
 }
-result = factors[x=246]!
+result = factors(x=246)!

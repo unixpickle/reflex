@@ -26,19 +26,19 @@ Tape = {
   cur = left.item
 
   move_right = @(
-    left = @.left.push(x=@.right.item)!
-    right = @.right.prefix
+    left = left.push(x=right.item)!
+    right = right.prefix
   )
   move_left = @(
-    left = @.left.prefix
-    right = @.right.push(x=@.left.item)!
+    left = left.prefix
+    right = right.push(x=left.item)!
   )
 
   increment = @(
-    left = @.left(item=^^.wrap_int(x=@.cur.add(y=1)!)!)
+    left = left(item=^^.wrap_int(x=cur.add(y=1)!)!)
   )
   decrement = @(
-    left = @.left(item=^^.wrap_int(x=@.cur.sub(y=1)!)!)
+    left = left(item=^^.wrap_int(x=cur.sub(y=1)!)!)
   )
 
   # Unit test for moving around the tape; test! should be 1.
@@ -137,17 +137,17 @@ Interpreter = {
   run_gt = step[tape=^.tape.move_right]
   run_minus = step[tape=^.tape.decrement]
   run_plus = step[tape=^.tape.increment]
-  run_dot = step(output=@.output.cat(y=@.tape.cur.chr)!)
+  run_dot = step(output=output.cat(y=tape.cur.chr)!)
   run_open_bracket = @(
-    program = @.tape.cur.select(
-      false = @.program.match_open
-      true = @.program.advanced
+    program = tape.cur.select(
+      false = program.match_open
+      true = program.advanced
     )!
   )
   run_close_bracket = @(
-    program = @.tape.cur.select(
-      false = @.program.advanced
-      true = @.program.match_close
+    program = tape.cur.select(
+      false = program.advanced
+      true = program.match_close
     )!
   )
 

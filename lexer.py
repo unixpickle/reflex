@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -56,12 +56,12 @@ class Tokenizer:
             while (x := self.cur) and x != "\n":
                 self.adv()
             return None
-        elif ch.isdigit() or (ch == "-" and self.peek(1).isdigit()):
+        elif ch.isdigit() or (ch == "-" and self.peek().isdigit()):
             return self.parse_int_lit()
         elif ch.isalpha() or ch == "_":
             return self.parse_identifier()
         else:
-            raise LexError(f"Unexpected {ch!r} at {line}:{col}")
+            raise LexError(f"Unexpected {ch!r} at {self.line}:{self.col}")
 
     @property
     def cur(self) -> str:
@@ -131,7 +131,7 @@ class Tokenizer:
     def parse_int_lit(self) -> Token:
         start_line = self.line
         start_col = self.col
-        assert self.cur.isdigit() or (self.cur == "-" and self.peek(1).isdigit())
+        assert self.cur.isdigit() or (self.cur == "-" and self.peek().isdigit())
         buf = [self.cur]
         self.adv()
         while self.cur.isdigit():

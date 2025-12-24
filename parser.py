@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+
 from lexer import tokenize
 
 
@@ -127,7 +128,6 @@ class Parser:
     def parse_expr(self) -> Node:
         node = self.parse_primary()
         while True:
-            start = self.peek_position()
             if self.match("."):
                 if self.match("PARENT"):
                     if isinstance(node, Parent):

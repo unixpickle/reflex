@@ -142,12 +142,31 @@ def str_to_block(node: StringLit) -> Block:
 
 
 def block_get(block: Block | Override, key: str) -> Node:
-    assert isinstance(
-        block, (Block, Override)
-    ), f"cannot get key {key!r} of node type {type(block)}"
+    assert isinstance(block, (Block, Override)), (
+        f"cannot get key {key!r} of node type {type(block)}"
+    )
     if key in block.defs:
         return block.defs[key]
     raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
+
+
+def replace_root_identifier_with_self_ref(expr: Node) -> Node:
+    if isinstance(expr, Identifier):
+        return Access(base=SelfRef(), attr=expr.name)
+    elif isinstance(expr, (Call, Override)):
+        return type(expr)(
+            base=replace_root_identifier_with_self_ref(expr.base), defs=expr.defs
+        )
+    elif isinstance(expr, Access):
+        return Access(
+            base=replace_root_identifier_with_self_ref(expr.base), attr=expr.attr
+        )
+    elif isinstance(expr, (AncestorLookup, Parent, SelfRef, IntLit, StringLit)):
+        return expr
+    else:
+        raise ValueError(
+            f"type {type(expr)} cannot replace root identifiers with parents"
+        )
 
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
@@ -187,7 +206,10 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
     elif isinstance(expr, Call):
         return Call(
             base=preprocess(parents, expr.base),
-            defs={k: preprocess(parents, v) for k, v in expr.defs.items()},
+            defs={
+                k: preprocess(parents, replace_root_identifier_with_self_ref(v))
+                for k, v in expr.defs.items()
+            },
         )
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
