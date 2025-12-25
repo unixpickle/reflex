@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable
 
 from parser import (
@@ -21,13 +22,20 @@ class BackEdge(Node):
     base: Block | Override
 
 
+@dataclass
 class BuiltInFn(Node):
-    pass
+    context: BackEdge
+
+    def map(self, f: Callable[[Node], Node]) -> "BuiltInFn":
+        return type(self)(context=f(self.context))
 
 
 @dataclass
 class IntOp(BuiltInFn):
     fn: Callable[[int, int], int]
+
+    def map(self, f: Callable[[Node], Node]) -> "IntOp":
+        return IntOp(context=f(self.context), fn=self.fn)
 
 
 @dataclass
@@ -46,17 +54,22 @@ class Select(BuiltInFn):
 
 
 def int_op_block(parent: Block, fn: Callable[[int, int], int]) -> Block:
-    return Block(
-        defs=dict(
-            x=BackEdge(base=parent),
-            result=IntOp(fn=fn),
-        )
+    result = Block(defs=[])
+    result.defs = dict(
+        x=BackEdge(base=parent),
+        result=IntOp(context=BackEdge(base=result), fn=fn),
     )
+    return result
 
 
 def int_to_block(node: IntLit) -> Block:
     assert isinstance(node, IntLit)
     result = Block(defs=dict(_inner=node))
+    select_block = Block(defs=[])
+    select_block.defs = dict(
+        cond=BackEdge(base=result),
+        result=Select(context=BackEdge(base=select_block)),
+    )
     result.defs.update(
         dict(
             add=int_op_block(result, lambda x, y: x + y),
@@ -72,14 +85,9 @@ def int_to_block(node: IntLit) -> Block:
             bit_and=int_op_block(result, lambda x, y: x & y),
             bit_or=int_op_block(result, lambda x, y: x | y),
             bit_xor=int_op_block(result, lambda x, y: x ^ y),
-            str=IntStr(),
-            chr=IntChr(),
-            select=Block(
-                defs=dict(
-                    cond=BackEdge(base=result),
-                    result=Select(),
-                )
-            ),
+            str=IntStr(context=BackEdge(base=result)),
+            chr=IntChr(context=BackEdge(base=result)),
+            select=select_block,
         )
     )
     return result
@@ -105,36 +113,37 @@ class StrSubstr(BuiltInFn):
     pass
 
 
+def str_method(str_block: Block, fn: Callable[[Block], dict[str, Block]]) -> Block:
+    block = Block(defs=dict(x=BackEdge(base=str_block)))
+    block.defs.update(fn(block))
+    return block
+
+
 def str_to_block(node: StringLit) -> Block:
     assert isinstance(node, StringLit)
     result = Block(defs=dict(_inner=node))
     result.defs.update(
         dict(
-            cat=Block(
-                defs=dict(
-                    x=BackEdge(base=result),
-                    result=StrCat(),
-                )
+            cat=str_method(
+                result,
+                lambda method_block: dict(
+                    result=StrCat(context=BackEdge(base=method_block)),
+                ),
             ),
-            eq=Block(
-                defs=dict(
-                    x=BackEdge(base=result),
-                    result=StrEq(),
-                )
+            eq=str_method(
+                result,
+                lambda method_block: dict(
+                    result=StrEq(context=BackEdge(base=method_block)),
+                ),
             ),
-            len=Block(
-                defs=dict(
-                    x=BackEdge(base=result),
-                    result=StrLen(),
-                )
-            ),
-            substr=Block(
-                defs=dict(
-                    x=BackEdge(base=result),
+            len=StrLen(context=BackEdge(base=result)),
+            substr=str_method(
+                result,
+                lambda method_block: dict(
                     start=int_to_block(IntLit(value=0)),
-                    end=StrLen(),
-                    result=StrSubstr(),
-                )
+                    end=StrLen(context=BackEdge(base=result)),
+                    result=StrSubstr(context=BackEdge(base=method_block)),
+                ),
             ),
         )
     )
@@ -148,25 +157,6 @@ def block_get(block: Block | Override, key: str) -> Node:
     if key in block.defs:
         return block.defs[key]
     raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
-
-
-def replace_root_identifier_with_self_ref(expr: Node) -> Node:
-    if isinstance(expr, Identifier):
-        return Access(base=SelfRef(), attr=expr.name)
-    elif isinstance(expr, (Call, Override)):
-        return type(expr)(
-            base=replace_root_identifier_with_self_ref(expr.base), defs=expr.defs
-        )
-    elif isinstance(expr, Access):
-        return Access(
-            base=replace_root_identifier_with_self_ref(expr.base), attr=expr.attr
-        )
-    elif isinstance(expr, (AncestorLookup, Parent, SelfRef, IntLit, StringLit)):
-        return expr
-    else:
-        raise ValueError(
-            f"type {type(expr)} cannot replace root identifiers with parents"
-        )
 
 
 def preprocess(parents: list[Block | Override], expr: Node) -> Node:
@@ -206,17 +196,14 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
     elif isinstance(expr, Call):
         return Call(
             base=preprocess(parents, expr.base),
-            defs={
-                k: preprocess(parents, replace_root_identifier_with_self_ref(v))
-                for k, v in expr.defs.items()
-            },
+            defs={k: preprocess(parents, v) for k, v in expr.defs.items()},
         )
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
     elif isinstance(expr, StringLit):
         return str_to_block(expr)
     elif isinstance(expr, Identifier):
-        return expr
+        return preprocess(parents, Access(base=SelfRef(), attr=expr.name))
     else:
         raise ValueError(f"type {type(expr)} cannot fill parents")
 
@@ -251,7 +238,9 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         # Copy the object so we can update the base later.
         return BackEdge(base=node.base)
-    elif isinstance(node, (IntLit, StringLit, Identifier, BuiltInFn)):
+    elif isinstance(node, BuiltInFn):
+        return node.map(lambda x: _clone_blocks(x, result))
+    elif isinstance(node, (IntLit, StringLit)):
         return node
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -270,7 +259,9 @@ def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         if id(node.base) in mapping:
             node.base = mapping[id(node.base)]
-    elif isinstance(node, (IntLit, StringLit, Identifier, BuiltInFn)):
+    elif isinstance(node, BuiltInFn):
+        node.map(lambda x: _replace_back_edges(x, mapping))
+    elif isinstance(node, (IntLit, StringLit)):
         pass
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -283,263 +274,188 @@ def clone_tree(node: Node) -> Node:
     return new_node
 
 
-def evaluate_result(context: Block | Override, expr: Node) -> Node:
+def evaluate_result(expr: Node) -> Node:
     """
     Non-recursive evaluator using an explicit continuation stack.
     """
-    stack: list[tuple] = []
+
+    # This is a stack of continuations.
+    # Each continuation can either yield a value for the next continuation on
+    # the stack, or yield an expression for the next iteration of the outer loop.
+    #
+    # In particular, the call returns (expr, value) where exactly one is None.
+    # If the return is value, then we continue the inner loop; for expr, we break
+    # and start a new outer loop with the new expr.
+    stack: list[Callable[[Node], tuple[Node | None, Node | None]]] = []
+
+    def _access_after_base(value: Node, *, attr: str):
+        owner = value
+
+        if isinstance(owner, Block) and attr in owner.cache:
+            # do not push restore frame; we already restored
+            return None, owner.cache[attr]
+
+        # Evaluate attribute in the owner's context, and cache result afterwards.
+        expr = block_get(owner, attr)
+        stack.append(partial(_cache_attr_then_restore, owner=owner, attr=attr))
+        return expr, None
+
+    def _cache_attr_then_restore(value: Node, *, owner: Node, attr: str):
+        if isinstance(owner, Block):
+            owner.cache[attr] = value
+        return None, value
+
+    def _override_after_base(value: Node, *, override: Call | Override):
+        base_block = value
+        new_block = clone_tree(base_block)
+        new_block.defs = new_block.defs.copy()
+        for k, v in override.defs.items():
+            new_def = clone_tree(v)
+            _replace_back_edges(new_def, {id(override): new_block})
+            new_block.defs[k] = new_def
+        return None, new_block
+
+    def _intop_after_x(value: Node, *, expr: Node):
+        x = value
+        assert isinstance(x, IntLit), f"{x=}"
+        stack.append(partial(_intop_apply, expr=expr, x=x))
+        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        return expr, None
+
+    def _intop_apply(value: Node, *, expr: Node, x: Node):
+        y = value
+        assert isinstance(y, IntLit), f"{y=}"
+        value = int_to_block(IntLit(value=expr.fn(x.value, y.value)))
+        return None, value
+
+    def _select_after_cond(value: Node, *, expr: Node):
+        cond = value
+        assert isinstance(cond, IntLit), f"{cond=}"
+        expr = Access(base=expr.context, attr=("true" if cond.value else "false"))
+        return expr, None
+
+    def _intstr_apply(value: Node):
+        x = value
+        assert isinstance(x, IntLit), f"{x=}"
+        value = str_to_block(StringLit(value=str(x.value)))
+        return None, value
+
+    def _intchr_apply(value: Node):
+        x = value
+        assert isinstance(x, IntLit), f"{x=}"
+        value = str_to_block(StringLit(value=chr(x.value)))
+        return None, value
+
+    def _strcat_after_x(value: Node, *, expr: Node):
+        x = value
+        assert isinstance(x, StringLit), f"{x=}"
+        stack.append(partial(_strcat_apply, x=x))
+        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        return expr, None
+
+    def _strcat_apply(value: Node, *, x: Node):
+        y = value
+        assert isinstance(y, StringLit), f"{y=}"
+        value = str_to_block(StringLit(value=x.value + y.value))
+        return None, value
+
+    def _streq_after_x(value: Node, *, expr: Node):
+        x = value
+        assert isinstance(x, StringLit), f"{x=}"
+        stack.append(partial(_streq_apply, x=x))
+        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        return expr, None
+
+    def _streq_apply(value: Node, *, x: Node):
+        y = value
+        assert isinstance(y, StringLit), f"{y=}"
+        value = int_to_block(IntLit(value=int(x.value == y.value)))
+        return None, value
+
+    def _strlen_after_x(value: Node):
+        x = value
+        assert isinstance(x, StringLit), f"{x=}"
+        value = int_to_block(IntLit(value=len(x.value)))
+        return None, value
+
+    def _strsubstr_after_x(value: Node, *, expr: Node):
+        x = value
+        assert isinstance(x, StringLit), f"{x=}"
+        stack.append(partial(_strsubstr_after_start, x=x, expr=expr))
+        expr = Access(base=Access(base=expr.context, attr="start"), attr="_inner")
+        return expr, None
+
+    def _strsubstr_after_start(value: Node, *, x: Node, expr: Node):
+        start = value
+        assert isinstance(start, IntLit), f"{start=}"
+        stack.append(partial(_strsubstr_apply, x=x, start=start))
+        expr = Access(base=Access(base=expr.context, attr="end"), attr="_inner")
+        return expr, None
+
+    def _strsubstr_apply(value: Node, *, x: Node, start: Node):
+        end = value
+        assert isinstance(x, StringLit), f"{x=}"
+        assert isinstance(start, IntLit), f"{start=}"
+        assert isinstance(end, IntLit), f"{end=}"
+        substr = x.value[start.value : end.value]
+        value = str_to_block(StringLit(value=substr))
+        return None, value
 
     while True:
-        # ---- Descend (choose what to evaluate next) ----
+        assert not isinstance(expr, (Identifier, SelfRef)), (
+            f"block type should not exist after preprocessing: {type(expr)}"
+        )
+
         if isinstance(expr, Access):
-            # Evaluate base first; after that, look up attr in the owner,
-            # evaluate it in the owner context, then restore the previous context.
-            stack.append(("access_after_base", expr.attr, context))
+            stack.append(partial(_access_after_base, attr=expr.attr))
             expr = expr.base
             continue
-
-        if isinstance(expr, (Call, Override)):
-            stack.append(("override_after_base", expr))
+        elif isinstance(expr, (Call, Override)):
+            stack.append(partial(_override_after_base, override=expr))
             expr = expr.base
             continue
-
-        if isinstance(expr, Identifier):
-            # --- CACHE: bare identifier lookup in the current Block context ---
-            if isinstance(context, Block) and expr.name in context.cache:
-                # Treat cached value as the next expression (which will be a leaf).
-                expr = context.cache[expr.name]
-                continue
-
-            # Not cached: evaluate the definition and then cache the *evaluated* value.
-            if isinstance(context, Block):
-                stack.append(("cache_identifier", context, expr.name))
-            expr = block_get(context, expr.name)
-            continue
-
-        if isinstance(expr, BackEdge):
+        elif isinstance(expr, BackEdge):
             expr = expr.base
-            continue
-
-        if isinstance(expr, IntOp):
-            # Evaluate x._inner then y._inner, then apply fn.
-            stack.append(("intop_after_x", expr.fn, context))
-            expr = Access(base=Identifier(name="x"), attr="_inner")
-            continue
-
-        if isinstance(expr, Select):
-            # Evaluate cond._inner, then pick 'true' or 'false' in the *current* context.
-            stack.append(("select_after_cond", context))
-            expr = Access(base=Identifier(name="cond"), attr="_inner")
-            continue
-
-        if isinstance(expr, IntStr):
-            # Evaluate _inner, then convert to string block.
-            stack.append(("intstr_after_inner",))
-            expr = Identifier(name="_inner")
-            continue
-
-        if isinstance(expr, IntChr):
-            # Evaluate _inner, then convert to string block.
-            stack.append(("intchr_after_inner",))
-            expr = Identifier(name="_inner")
-            continue
-
-        if isinstance(expr, StrCat):
-            # Evaluate x._inner then y._inner, then concatenate.
-            stack.append(("strcat_after_x", context))
-            expr = Access(base=Identifier(name="x"), attr="_inner")
-            continue
-
-        if isinstance(expr, StrEq):
-            # Evaluate x._inner then y._inner, then compare.
-            stack.append(("streq_after_x", context))
-            expr = Access(base=Identifier(name="x"), attr="_inner")
-            continue
-
-        if isinstance(expr, StrLen):
-            # Evaluate x._inner, then take its length.
-            stack.append(("strlen_after_x",))
-            expr = Access(base=Identifier(name="x"), attr="_inner")
-            continue
-
-        if isinstance(expr, StrSubstr):
-            # Evaluate x._inner, then start._inner, then end._inner; slice s[start:end].
-            stack.append(("strsubstr_after_x", context))
-            expr = Access(base=Identifier(name="x"), attr="_inner")
-            continue
-
-        if isinstance(expr, SelfRef):
-            value: Node = context
+        elif isinstance(expr, IntOp):
+            stack.append(partial(_intop_after_x, expr=expr))
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, Select):
+            stack.append(partial(_select_after_cond, expr=expr))
+            expr = Access(base=Access(base=expr.context, attr="cond"), attr="_inner")
+        elif isinstance(expr, IntStr):
+            stack.append(_intstr_apply)
+            expr = Access(base=expr.context, attr="_inner")
+        elif isinstance(expr, IntChr):
+            stack.append(_intchr_apply)
+            expr = Access(base=expr.context, attr="_inner")
+        elif isinstance(expr, StrCat):
+            stack.append(partial(_strcat_after_x, expr=expr))
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, StrEq):
+            stack.append(partial(_streq_after_x, expr=expr))
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, StrLen):
+            stack.append(_strlen_after_x)
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, StrSubstr):
+            stack.append(partial(_strsubstr_after_x, expr=expr))
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
         else:
-            # Leaf (e.g., IntLit, StringLit, Block, BuiltInFn that evaluates to itself, etc.)
+            # Apply continuation(s) because we have reduced to a leaf value
+            # like IntLit that evaluates to itself.
             value = expr
-
-        # ---- Return / apply continuations ----
-        while True:
-            if not stack:
-                return value
-
-            tag, *rest = stack.pop()
-
-            if tag == "access_after_base":
-                attr, saved_ctx = rest
-                owner = value
-
-                # --- CACHE fast path for attribute access on a Block owner ---
-                if isinstance(owner, Block) and attr in owner.cache:
-                    value = owner.cache[attr]
-                    context = saved_ctx
-                    # do not push restore frame; we already restored
-                    continue
-
-                # Evaluate attribute in the owner's context, and cache result afterwards.
-                expr = block_get(owner, attr)
-                stack.append(("cache_attr_then_restore", owner, attr, saved_ctx))
-                context = owner
-                break  # go back to descend with new expr
-
-            if tag == "cache_attr_then_restore":
-                owner, attr, saved_ctx = rest
-                # Store the fully evaluated result into the owner's cache.
-                if isinstance(owner, Block):
-                    owner.cache[attr] = value
-                context = saved_ctx
-                # Keep 'value' and continue applying higher frames.
-                continue
-
-            if tag == "restore_ctx":
-                (saved_ctx,) = rest
-                context = saved_ctx
-                continue
-
-            if tag == "override_after_base":
-                (override,) = rest
-                base_block = value
-                new_block = clone_tree(base_block)
-                new_block.defs = new_block.defs.copy()
-                for k, v in override.defs.items():
-                    new_def = clone_tree(v)
-                    _replace_back_edges(new_def, {id(override): new_block})
-                    new_block.defs[k] = new_def
-                value = new_block
-                continue
-
-            if tag == "cache_identifier":
-                owner_block, name = rest
-                if isinstance(owner_block, Block):
-                    owner_block.cache[name] = value
-                # keep 'value'
-                continue
-
-            if tag == "intop_after_x":
-                fn, saved_ctx = rest
-                x = value
-                assert isinstance(x, IntLit), f"{x=}"
-                stack.append(("intop_apply", fn, x, saved_ctx))
-                expr = Access(base=Identifier(name="y"), attr="_inner")
-                break
-
-            if tag == "intop_apply":
-                fn, x, saved_ctx = rest
-                y = value
-                assert isinstance(y, IntLit), f"{y=}"
-                value = int_to_block(IntLit(value=fn(x.value, y.value)))
-                continue
-
-            if tag == "select_after_cond":
-                (saved_ctx,) = rest
-                cond = value
-                assert isinstance(cond, IntLit), f"{cond=}"
-                expr = (
-                    Identifier(name="true") if cond.value else Identifier(name="false")
-                )
-                context = saved_ctx
-                break
-
-            if tag == "intstr_after_inner":
-                x = value
-                assert isinstance(x, IntLit), f"{x=}"
-                value = str_to_block(StringLit(value=str(x.value)))
-                continue
-
-            if tag == "intchr_after_inner":
-                x = value
-                assert isinstance(x, IntLit), f"{x=}"
-                value = str_to_block(StringLit(value=chr(x.value)))
-                continue
-
-            if tag == "strcat_after_x":
-                (saved_ctx,) = rest
-                x = value
-                assert isinstance(x, StringLit), f"{x=}"
-                stack.append(("strcat_apply", x, saved_ctx))
-                expr = Access(base=Identifier(name="y"), attr="_inner")
-                break  # descend to evaluate y
-
-            if tag == "strcat_apply":
-                x, saved_ctx = rest
-                y = value
-                assert isinstance(y, StringLit), f"{y=}"
-                value = str_to_block(StringLit(value=x.value + y.value))
-                context = saved_ctx
-                continue
-
-            if tag == "streq_after_x":
-                (saved_ctx,) = rest
-                x = value
-                assert isinstance(x, StringLit), f"{x=}"
-                stack.append(("streq_apply", x, saved_ctx))
-                expr = Access(base=Identifier(name="y"), attr="_inner")
-                break  # descend to evaluate y
-
-            if tag == "streq_apply":
-                x, saved_ctx = rest
-                y = value
-                assert isinstance(y, StringLit), f"{y=}"
-                value = int_to_block(IntLit(value=int(x.value == y.value)))
-                context = saved_ctx
-                continue
-
-            if tag == "strlen_after_x":
-                x = value
-                assert isinstance(x, StringLit), f"{x=}"
-                # If your StringLit stores the raw string elsewhere, adjust accordingly.
-                value = int_to_block(IntLit(value=len(x.value)))
-                continue
-
-            if tag == "strsubstr_after_x":
-                (saved_ctx,) = rest
-                x = value
-                assert isinstance(x, StringLit), f"{x=}"
-                # Next, evaluate start._inner
-                stack.append(("strsubstr_after_start", x, saved_ctx))
-                expr = Access(base=Identifier(name="start"), attr="_inner")
-                break  # descend to evaluate start
-
-            if tag == "strsubstr_after_start":
-                x, saved_ctx = rest
-                start = value
-                assert isinstance(start, IntLit), f"{start=}"
-                # Next, evaluate end._inner
-                stack.append(("strsubstr_apply", x, start, saved_ctx))
-                expr = Access(base=Identifier(name="end"), attr="_inner")
-                break  # descend to evaluate end
-
-            if tag == "strsubstr_apply":
-                x, start, saved_ctx = rest
-                end = value
-                assert isinstance(x, StringLit), f"{x=}"
-                assert isinstance(start, IntLit), f"{start=}"
-                assert isinstance(end, IntLit), f"{end=}"
-                # Inclusive start, exclusive end
-                substr = x.value[start.value : end.value]
-                value = str_to_block(StringLit(value=substr))
-                context = saved_ctx
-                continue
-
-            raise RuntimeError(f"unknown continuation frame: {tag}")
+            while True:
+                if not stack:
+                    return value
+                fn = stack.pop()
+                result = fn(value)
+                if result[0] is not None:
+                    expr = result[0]
+                    break
+                else:
+                    value = result[1]
 
 
 def program_result(program: Block) -> Node:
     program = preprocess([], program)
-    return evaluate_result(program, block_get(program, "result"))
+    return evaluate_result(block_get(program, "result"))
