@@ -1,0 +1,10 @@
+# Compute the sum from N=1 to i
+IntSum = {
+  i = 0
+  result = i.select(
+    true = i.add(y=@(i=i.sub(y=1)!)!)!
+    false = 0
+  )!
+}
+
+result = IntSum(i=10000)!
