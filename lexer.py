@@ -46,6 +46,10 @@ class Tokenizer:
             res = Token("ANCESTOR", "^^", self.line, self.col)
             self.adv(2)
             return res
+        elif ch == ":" and self.peek() == "=":  # must run before singles
+            res = Token(":=", ":=", self.line, self.col)
+            self.adv(2)
+            return res
         elif ch in self.singles:
             res = Token(self.singles[ch], ch, self.line, self.col)
             self.adv()

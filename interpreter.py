@@ -7,6 +7,7 @@ from parser import (
     AncestorLookup,
     Block,
     Call,
+    Eager,
     Identifier,
     IntLit,
     Node,
@@ -151,9 +152,9 @@ def str_to_block(node: StringLit) -> Block:
 
 
 def block_get(block: Block | Override, key: str) -> Node:
-    assert isinstance(block, (Block, Override)), (
-        f"cannot get key {key!r} of node type {type(block)}"
-    )
+    assert isinstance(
+        block, (Block, Override)
+    ), f"cannot get key {key!r} of node type {type(block)}"
     if key in block.defs:
         return block.defs[key]
     raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
@@ -204,6 +205,8 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return str_to_block(expr)
     elif isinstance(expr, Identifier):
         return preprocess(parents, Access(base=SelfRef(), attr=expr.name))
+    elif isinstance(expr, Eager):
+        return Eager(base=preprocess(parents, expr.base))
     else:
         raise ValueError(f"type {type(expr)} cannot fill parents")
 
@@ -238,6 +241,8 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         # Copy the object so we can update the base later.
         return BackEdge(base=node.base)
+    elif isinstance(node, Eager):
+        return Eager(base=_clone_blocks(node.base, result))
     elif isinstance(node, BuiltInFn):
         return node.map(lambda x: _clone_blocks(x, result))
     elif isinstance(node, (IntLit, StringLit)):
@@ -259,6 +264,8 @@ def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
     elif isinstance(node, BackEdge):
         if id(node.base) in mapping:
             node.base = mapping[id(node.base)]
+    elif isinstance(node, Eager):
+        _replace_back_edges(node.base, mapping)
     elif isinstance(node, BuiltInFn):
         node.map(lambda x: _replace_back_edges(x, mapping))
     elif isinstance(node, (IntLit, StringLit)):
@@ -288,19 +295,18 @@ def evaluate_result(expr: Node) -> Node:
     # and start a new outer loop with the new expr.
     stack: list[Callable[[Node], tuple[Node | None, Node | None]]] = []
 
-    def _access_after_base(value: Node, *, attr: str):
+    def _access_after_base(value: Node, *, attr: str, should_cache: bool):
         owner = value
 
         if isinstance(owner, Block) and attr in owner.cache:
-            # do not push restore frame; we already restored
             return None, owner.cache[attr]
 
-        # Evaluate attribute in the owner's context, and cache result afterwards.
         expr = block_get(owner, attr)
-        stack.append(partial(_cache_attr_then_restore, owner=owner, attr=attr))
+        if should_cache:
+            stack.append(partial(_cache_attr, owner=owner, attr=attr))
         return expr, None
 
-    def _cache_attr_then_restore(value: Node, *, owner: Node, attr: str):
+    def _cache_attr(value: Node, *, owner: Node, attr: str):
         if isinstance(owner, Block):
             owner.cache[attr] = value
         return None, value
@@ -313,13 +319,19 @@ def evaluate_result(expr: Node) -> Node:
             new_def = clone_tree(v)
             _replace_back_edges(new_def, {id(override): new_block})
             new_block.defs[k] = new_def
-        return None, new_block
+        # Return the block as an expr to evaluate any eager fields before
+        # continuing.
+        return new_block, None
 
     def _intop_after_x(value: Node, *, expr: Node):
         x = value
         assert isinstance(x, IntLit), f"{x=}"
         stack.append(partial(_intop_apply, expr=expr, x=x))
-        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        expr = Access(
+            base=Access(base=expr.context, attr="y", cache=False),
+            attr="_inner",
+            cache=False,
+        )
         return expr, None
 
     def _intop_apply(value: Node, *, expr: Node, x: Node):
@@ -331,7 +343,11 @@ def evaluate_result(expr: Node) -> Node:
     def _select_after_cond(value: Node, *, expr: Node):
         cond = value
         assert isinstance(cond, IntLit), f"{cond=}"
-        expr = Access(base=expr.context, attr=("true" if cond.value else "false"))
+        expr = Access(
+            base=expr.context,
+            attr=("true" if cond.value else "false"),
+            cache=False,
+        )
         return expr, None
 
     def _intstr_apply(value: Node):
@@ -350,7 +366,11 @@ def evaluate_result(expr: Node) -> Node:
         x = value
         assert isinstance(x, StringLit), f"{x=}"
         stack.append(partial(_strcat_apply, x=x))
-        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        expr = Access(
+            base=Access(base=expr.context, attr="y", cache=False),
+            attr="_inner",
+            cache=False,
+        )
         return expr, None
 
     def _strcat_apply(value: Node, *, x: Node):
@@ -363,7 +383,11 @@ def evaluate_result(expr: Node) -> Node:
         x = value
         assert isinstance(x, StringLit), f"{x=}"
         stack.append(partial(_streq_apply, x=x))
-        expr = Access(base=Access(base=expr.context, attr="y"), attr="_inner")
+        expr = Access(
+            base=Access(base=expr.context, attr="y", cache=False),
+            attr="_inner",
+            cache=False,
+        )
         return expr, None
 
     def _streq_apply(value: Node, *, x: Node):
@@ -382,14 +406,22 @@ def evaluate_result(expr: Node) -> Node:
         x = value
         assert isinstance(x, StringLit), f"{x=}"
         stack.append(partial(_strsubstr_after_start, x=x, expr=expr))
-        expr = Access(base=Access(base=expr.context, attr="start"), attr="_inner")
+        expr = Access(
+            base=Access(base=expr.context, attr="start"),
+            attr="_inner",
+            cache=False,
+        )
         return expr, None
 
     def _strsubstr_after_start(value: Node, *, x: Node, expr: Node):
         start = value
         assert isinstance(start, IntLit), f"{start=}"
         stack.append(partial(_strsubstr_apply, x=x, start=start))
-        expr = Access(base=Access(base=expr.context, attr="end"), attr="_inner")
+        expr = Access(
+            base=Access(base=expr.context, attr="end"),
+            attr="_inner",
+            cache=False,
+        )
         return expr, None
 
     def _strsubstr_apply(value: Node, *, x: Node, start: Node):
@@ -401,19 +433,30 @@ def evaluate_result(expr: Node) -> Node:
         value = str_to_block(StringLit(value=substr))
         return None, value
 
+    def _eager_eval(value: Node, *, block: Node, attr: str):
+        block.defs[attr] = value
+        return block, None
+
     while True:
-        assert not isinstance(expr, (Identifier, SelfRef)), (
-            f"block type should not exist after preprocessing: {type(expr)}"
-        )
+        assert not isinstance(
+            expr, (Identifier, SelfRef)
+        ), f"block type should not exist after preprocessing: {type(expr)}"
 
         if isinstance(expr, Access):
-            stack.append(partial(_access_after_base, attr=expr.attr))
+            stack.append(
+                partial(
+                    _access_after_base,
+                    attr=expr.attr,
+                    should_cache=expr.cache
+                    and not isinstance(expr.base, (Call, Override)),
+                )
+            )
             expr = expr.base
-            continue
+        elif isinstance(expr, Eager):
+            expr = expr.base
         elif isinstance(expr, (Call, Override)):
             stack.append(partial(_override_after_base, override=expr))
             expr = expr.base
-            continue
         elif isinstance(expr, BackEdge):
             expr = expr.base
         elif isinstance(expr, IntOp):
@@ -440,6 +483,12 @@ def evaluate_result(expr: Node) -> Node:
         elif isinstance(expr, StrSubstr):
             stack.append(partial(_strsubstr_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, Block) and (attr := first_eager_key(expr)):
+            if attr in expr.cache:
+                expr.defs[attr] = expr.cache[attr]
+            else:
+                stack.append(partial(_eager_eval, block=expr, attr=attr))
+                expr = block_get(expr, attr)
         else:
             # Apply continuation(s) because we have reduced to a leaf value
             # like IntLit that evaluates to itself.
@@ -454,6 +503,13 @@ def evaluate_result(expr: Node) -> Node:
                     break
                 else:
                     value = result[1]
+
+
+def first_eager_key(block: Block) -> str | None:
+    for k, v in block.defs.items():
+        if isinstance(v, Eager):
+            return k
+    return None
 
 
 def program_result(program: Block) -> Node:

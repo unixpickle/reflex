@@ -47,6 +47,7 @@ class AncestorLookup(Node):
 class Access(Node):
     base: Node
     attr: str
+    cache: bool = True
 
 
 @dataclass
@@ -59,6 +60,11 @@ class Override(Node):
 class Call(Node):
     base: Node
     defs: dict[str, Node]
+
+
+@dataclass
+class Eager(Node):
+    base: Node
 
 
 @dataclass
@@ -109,9 +115,9 @@ class Parser:
 
     def parse_definition(self) -> Definition:
         name = self.expect("IDENT").val
-        self.expect("=")
+        eq = self.expect("=", ":=")
         expr = self.parse_expr()
-        return Definition(name, expr)
+        return Definition(name, expr if eq.typ == "=" else Eager(base=expr))
 
     def parse_defs_until(self, stop) -> dict[str, Node]:
         defs = {}

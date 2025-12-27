@@ -1,9 +1,13 @@
 # Compute the sum from N=1 to i
 IntSum = {
   i = 0
+  sum = 0
   result = i.select(
-    true = i.add(y=@(i=i.sub(y=1)!)!)!
-    false = 0
+    true = @(
+      i := i.sub(y=1)!
+      sum := sum.add(y=i)!
+    )!
+    false = sum 
   )!
 }
 
