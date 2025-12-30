@@ -10,7 +10,6 @@ class Node:
 @dataclass
 class Block(Node):
     defs: dict[str, Node]
-    cache: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -47,7 +46,6 @@ class AncestorLookup(Node):
 class Access(Node):
     base: Node
     attr: str
-    cache: bool = True
 
 
 @dataclass

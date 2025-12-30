@@ -219,19 +219,19 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
     if isinstance(node, Access):
         return Access(base=_clone_blocks(node.base, result), attr=node.attr)
     elif isinstance(node, Block):
-        assert id(node) not in result, "somehow found a circular reference"
-        result[id(node)] = Block(defs={})
-        result[id(node)].defs = {
-            k: _clone_blocks(v, result) for k, v in node.defs.items()
-        }
+        if id(node) not in result:
+            result[id(node)] = Block(defs={})
+            result[id(node)].defs = {
+                k: _clone_blocks(v, result) for k, v in node.defs.items()
+            }
         return result[id(node)]
     elif isinstance(node, Override):
-        assert id(node) not in result, "somehow found a circular reference"
-        result[id(node)] = Override(base=None, defs={})
-        result[id(node)].base = _clone_blocks(node.base, result)
-        result[id(node)].defs = {
-            k: _clone_blocks(v, result) for k, v in node.defs.items()
-        }
+        if id(node) not in result:
+            result[id(node)] = Override(base=None, defs={})
+            result[id(node)].base = _clone_blocks(node.base, result)
+            result[id(node)].defs = {
+                k: _clone_blocks(v, result) for k, v in node.defs.items()
+            }
         return result[id(node)]
     elif isinstance(node, Call):
         return Call(
@@ -295,21 +295,10 @@ def evaluate_result(expr: Node) -> Node:
     # and start a new outer loop with the new expr.
     stack: list[Callable[[Node], tuple[Node | None, Node | None]]] = []
 
-    def _access_after_base(value: Node, *, attr: str, should_cache: bool):
+    def _access_after_base(value: Node, *, attr: str):
         owner = value
-
-        if isinstance(owner, Block) and attr in owner.cache:
-            return None, owner.cache[attr]
-
         expr = block_get(owner, attr)
-        if should_cache:
-            stack.append(partial(_cache_attr, owner=owner, attr=attr))
         return expr, None
-
-    def _cache_attr(value: Node, *, owner: Node, attr: str):
-        if isinstance(owner, Block):
-            owner.cache[attr] = value
-        return None, value
 
     def _override_after_base(value: Node, *, override: Call | Override):
         base_block = value
@@ -328,9 +317,8 @@ def evaluate_result(expr: Node) -> Node:
         assert isinstance(x, IntLit), f"{x=}"
         stack.append(partial(_intop_apply, expr=expr, x=x))
         expr = Access(
-            base=Access(base=expr.context, attr="y", cache=False),
+            base=Access(base=expr.context, attr="y"),
             attr="_inner",
-            cache=False,
         )
         return expr, None
 
@@ -346,7 +334,6 @@ def evaluate_result(expr: Node) -> Node:
         expr = Access(
             base=expr.context,
             attr=("true" if cond.value else "false"),
-            cache=False,
         )
         return expr, None
 
@@ -367,9 +354,8 @@ def evaluate_result(expr: Node) -> Node:
         assert isinstance(x, StringLit), f"{x=}"
         stack.append(partial(_strcat_apply, x=x))
         expr = Access(
-            base=Access(base=expr.context, attr="y", cache=False),
+            base=Access(base=expr.context, attr="y"),
             attr="_inner",
-            cache=False,
         )
         return expr, None
 
@@ -384,9 +370,8 @@ def evaluate_result(expr: Node) -> Node:
         assert isinstance(x, StringLit), f"{x=}"
         stack.append(partial(_streq_apply, x=x))
         expr = Access(
-            base=Access(base=expr.context, attr="y", cache=False),
+            base=Access(base=expr.context, attr="y"),
             attr="_inner",
-            cache=False,
         )
         return expr, None
 
@@ -409,7 +394,6 @@ def evaluate_result(expr: Node) -> Node:
         expr = Access(
             base=Access(base=expr.context, attr="start"),
             attr="_inner",
-            cache=False,
         )
         return expr, None
 
@@ -420,7 +404,6 @@ def evaluate_result(expr: Node) -> Node:
         expr = Access(
             base=Access(base=expr.context, attr="end"),
             attr="_inner",
-            cache=False,
         )
         return expr, None
 
@@ -443,14 +426,7 @@ def evaluate_result(expr: Node) -> Node:
         ), f"block type should not exist after preprocessing: {type(expr)}"
 
         if isinstance(expr, Access):
-            stack.append(
-                partial(
-                    _access_after_base,
-                    attr=expr.attr,
-                    should_cache=expr.cache
-                    and not isinstance(expr.base, (Call, Override)),
-                )
-            )
+            stack.append(partial(_access_after_base, attr=expr.attr))
             expr = expr.base
         elif isinstance(expr, Eager):
             expr = expr.base
@@ -484,11 +460,8 @@ def evaluate_result(expr: Node) -> Node:
             stack.append(partial(_strsubstr_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
         elif isinstance(expr, Block) and (attr := first_eager_key(expr)):
-            if attr in expr.cache:
-                expr.defs[attr] = expr.cache[attr]
-            else:
-                stack.append(partial(_eager_eval, block=expr, attr=attr))
-                expr = block_get(expr, attr)
+            stack.append(partial(_eager_eval, block=expr, attr=attr))
+            expr = block_get(expr, attr)
         else:
             # Apply continuation(s) because we have reduced to a leaf value
             # like IntLit that evaluates to itself.
