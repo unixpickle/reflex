@@ -7,6 +7,7 @@ from parser import (
     AncestorLookup,
     Block,
     Call,
+    CloneAttr,
     Eager,
     Identifier,
     IntLit,
@@ -207,6 +208,8 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         return preprocess(parents, Access(base=SelfRef(), attr=expr.name))
     elif isinstance(expr, Eager):
         return Eager(base=preprocess(parents, expr.base))
+    elif isinstance(expr, CloneAttr):
+        return expr
     else:
         raise ValueError(f"type {type(expr)} cannot fill parents")
 
@@ -245,7 +248,7 @@ def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
         return Eager(base=_clone_blocks(node.base, result))
     elif isinstance(node, BuiltInFn):
         return node.map(lambda x: _clone_blocks(x, result))
-    elif isinstance(node, (IntLit, StringLit)):
+    elif isinstance(node, (IntLit, StringLit, CloneAttr)):
         return node
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -268,7 +271,7 @@ def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
         _replace_back_edges(node.base, mapping)
     elif isinstance(node, BuiltInFn):
         node.map(lambda x: _replace_back_edges(x, mapping))
-    elif isinstance(node, (IntLit, StringLit)):
+    elif isinstance(node, (IntLit, StringLit, CloneAttr)):
         pass
     else:
         raise ValueError(f"cannot clone block: {type(node)}")
@@ -416,9 +419,12 @@ def evaluate_result(expr: Node) -> Node:
         value = str_to_block(StringLit(value=substr))
         return None, value
 
-    def _eager_eval(value: Node, *, block: Node, attr: str):
-        block.defs[attr] = value
-        return block, None
+    def _eager_eval(value: Node, *, block: Node, attrs: list[str]):
+        block.defs[attrs[0]] = value
+        if len(attrs) == 1:
+            return block, None
+        stack.append(partial(_eager_eval, block=block, attrs=attrs[1:]))
+        return None, block_get(block, attrs[1])
 
     while True:
         assert not isinstance(
@@ -459,9 +465,14 @@ def evaluate_result(expr: Node) -> Node:
         elif isinstance(expr, StrSubstr):
             stack.append(partial(_strsubstr_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
-        elif isinstance(expr, Block) and (attr := first_eager_key(expr)):
-            stack.append(partial(_eager_eval, block=expr, attr=attr))
-            expr = block_get(expr, attr)
+        elif isinstance(expr, Block) and (attrs := attr_clones(expr)):
+            expr = clone_tree(expr)
+            for target, source in attrs:
+                expr.defs[target] = expr.defs[source]
+        elif isinstance(expr, Block) and (attrs := eager_keys(expr)):
+            expr = clone_tree(expr)
+            stack.append(partial(_eager_eval, block=expr, attrs=attrs))
+            expr = block_get(expr, attrs[0])
         else:
             # Apply continuation(s) because we have reduced to a leaf value
             # like IntLit that evaluates to itself.
@@ -478,11 +489,20 @@ def evaluate_result(expr: Node) -> Node:
                     value = result[1]
 
 
-def first_eager_key(block: Block) -> str | None:
+def eager_keys(block: Block) -> str | None:
+    result = []
     for k, v in block.defs.items():
         if isinstance(v, Eager):
-            return k
-    return None
+            result.append(k)
+    return result
+
+
+def attr_clones(block: Block) -> list[(str, str)]:
+    result = []
+    for k, v in block.defs.items():
+        if isinstance(v, CloneAttr):
+            result.append((k, v.attr))
+    return result
 
 
 def program_result(program: Block) -> Node:

@@ -61,47 +61,34 @@ Program = {
   advanced = @(ip:=ip.add[y=1]!)
   rewound = @(ip:=ip.sub[y=1]!)
 
-  # Jump to a matching close bracket for an open bracket, then advance.
-  match_open = _match_open!
-  _match_open = {
+  # Matching routine for brackets
+  # Arguments: next_matcher, open_symbol, close_symbol
+  _matcher = {
     depth = 0
 
-    on_open = ^.advanced._match_open(depth:=depth.add[y=1]!)!
+    on_open = next_matcher(depth:=depth.add[y=1]!)!
     on_close = depth.le[y=1]!.select(
       true = ^.advanced
-      false = ^.advanced._match_open(depth:=depth.sub[y=1]!)!
+      false = next_matcher(depth:=depth.sub[y=1]!)!
     )!
-    on_other = ^.advanced._match_open(depth:=depth)!
+    on_other = next_matcher(depth:=depth)!
 
-    result = ^.cur_inst.eq[y="["]!.select(
+    result = ^.cur_inst.eq(y=open_symbol)!.select(
       true = on_open
-      false = ^.cur_inst.eq[y="]"]!.select(
+      false = ^.cur_inst.eq(y=close_symbol)!.select(
         true = on_close
         false = on_other
       )!
     )!
   }
 
+  # Jump to a matching close bracket for an open bracket, then advance.
+  match_open = _match_open!
+  _match_open = _matcher(next_matcher=advanced._match_open, open_symbol="[", close_symbol="]")
+
   # Jump to a matching open bracket for a close bracket, then advance.
   match_close = _match_close!
-  _match_close = {
-    depth = 0
-
-    on_close = ^.rewound._match_close(depth:=depth.add[y=1]!)!
-    on_open = depth.le[y=1]!.select(
-      true = ^.advanced
-      false = ^.rewound._match_close(depth:=depth.sub[y=1]!)!
-    )!
-    on_other = ^^.rewound._match_close(depth:=depth)!
-
-    result = ^.cur_inst.eq[y="]"]!.select(
-      true = on_close
-      false = ^.cur_inst.eq[y="["]!.select(
-        true = on_open
-        false = on_other
-      )!
-    )!
-  }
+  _match_close = _matcher(next_matcher=rewound._match_close, open_symbol="]", close_symbol="[")
 
   # Unit test for matching brackets; result is 1 when passed. 
   test = ^^.unit_test[
@@ -187,9 +174,6 @@ unit_test = {
 
 # Classic hello world
 result = Interpreter[code=">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+."]!.output
-
-# infinite loop
-#result = Interpreter[code="+[><]."]!.output
 
 # Below example prints 2*2 = "\x04"
 # result = Interpreter[code="++[->++<]>."]!.output

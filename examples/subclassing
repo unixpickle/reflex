@@ -1,0 +1,29 @@
+# This demonstrates a common pattern in OOP, where we subclass a class
+# and implement a new version of a method which uses the result of the
+# previous version.
+
+# Create a logger which prepends some "importance level" to the message.
+BaseLogger = {
+  format_message = {
+    importance = "info"
+    result = "[".cat(y=importance)!.cat(y="] ")!.cat(y=message)!
+  }
+}
+
+# Create a logger which prepends some extra info to the BaseLogger.
+ExtraInfoLogger = BaseLogger[
+  # Copy the old format_message to _format_message, so that
+  # we can override it.
+  _format_message <- format_message
+][
+  extra_info = "10:32:17 "
+  format_message = _format_message[
+    # We want to utilize the old result while overriding it
+    _result <- result
+  ][
+    result = ^.extra_info.cat(y=_result)!
+  ]
+]
+
+# This will be "10:32:17 [info] hello"
+result = ExtraInfoLogger.format_message(message="hello")!

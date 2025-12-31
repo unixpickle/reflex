@@ -66,6 +66,11 @@ class Eager(Node):
 
 
 @dataclass
+class CloneAttr(Node):
+    attr: str
+
+
+@dataclass
 class Definition:
     name: str
     expr: Node
@@ -113,7 +118,10 @@ class Parser:
 
     def parse_definition(self) -> Definition:
         name = self.expect("IDENT").val
-        eq = self.expect("=", ":=")
+        eq = self.expect("=", ":=", "<-")
+        if eq.typ == "<-":
+            attr = self.expect("IDENT").val
+            return Definition(name, CloneAttr(attr=attr))
         expr = self.parse_expr()
         return Definition(name, expr if eq.typ == "=" else Eager(base=expr))
 
