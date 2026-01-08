@@ -1,12 +1,14 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from lexer import tokenize
 from nodes import (
     Access,
     AncestorLookup,
+    BinaryOp,
     Block,
     Call,
     CloneAttr,
+    Conditional,
     Eager,
     Identifier,
     IntLit,
@@ -26,6 +28,24 @@ class Definition:
 
 class ParseError(Exception):
     pass
+
+
+# Precedence for binary arithmetic operators (higher = tighter binding)
+BinaryOpPrecedence = {
+    "||": 3,
+    "&&": 4,
+    "==": 5,
+    "!=": 5,
+    "<=": 7,
+    ">=": 7,
+    "<": 7,
+    ">": 7,
+    "+": 10,
+    "-": 10,
+    "*": 20,
+    "/": 20,
+    "%": 20,
+}
 
 
 class Parser:
@@ -56,7 +76,7 @@ class Parser:
         return f"{self.peek().line}:{self.peek().col}"
 
     def consume_delims(self):
-        while self.peek().typ in {",", "NEWLINE"}:
+        while self.peek().typ in {","}:
             self.k += 1
 
     def parse_module(self) -> Block:
@@ -90,6 +110,52 @@ class Parser:
         return defs
 
     def parse_expr(self) -> Node:
+        return self.parse_unary_or_ternary()
+
+    def parse_unary_or_ternary(self) -> Node:
+        """
+        Parse ternary conditional: cond ? a : b
+        `?:` has lower precedence than arithmetic and postfix.
+        """
+        node = self.parse_binary(0)
+        if self.match("?"):
+            true_expr = self.parse_expr()
+            self.expect(":")
+            false_expr = self.parse_expr()
+            return Conditional(cond=node, a=true_expr, b=false_expr)
+        return node
+
+    def parse_binary(self, min_prec: int) -> Node:
+        """
+        Precedence-climbing parser for left-associative binary ops
+        using BinaryOpPrecedence.
+        """
+        node = self.parse_postfix()
+        while True:
+            tok = self.peek()
+            op = tok.typ
+            if op not in BinaryOpPrecedence:
+                break
+
+            prec = BinaryOpPrecedence[op]
+            if prec < min_prec:
+                break
+
+            # consume operator
+            self.k += 1
+            # left-associative: recurse with higher min_prec
+            rhs = self.parse_binary(prec + 1)
+            node = BinaryOp(x=node, op=op, y=rhs)
+        return node
+
+    def parse_postfix(self) -> Node:
+        """
+        Parse primary expression followed by:
+        - .attr / .PARENT chains
+        - UNWRAP
+        - [ overrides ]
+        - ( call(...) )
+        """
         node = self.parse_primary()
         while True:
             if self.match("."):
@@ -119,7 +185,9 @@ class Parser:
 
     def parse_primary(self) -> Node:
         start_pos = self.peek_position()
-        token = self.expect("{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT")
+        token = self.expect(
+            "{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT", "("
+        )
         if token.typ == "{":
             defs = self.parse_defs_until({"}"})
             self.expect("}")
@@ -138,6 +206,11 @@ class Parser:
             return AncestorLookup(name)
         elif token.typ == "IDENT":
             return Identifier(token.val)
+        elif token.typ == "(":
+            # Parenthesized expression: (expr)
+            expr = self.parse_expr()
+            self.expect(")")
+            return expr
         raise ParseError(f"Unexpected token {token.typ} at {start_pos}")
 
 

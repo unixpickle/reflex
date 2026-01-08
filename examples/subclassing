@@ -6,7 +6,7 @@
 BaseLogger = {
   format_message = {
     importance = "info"
-    result = "[".cat(y=importance)!.cat(y="] ")!.cat(y=message)!
+    result = "[" + importance + "] " + message
   }
 }
 
@@ -21,7 +21,7 @@ ExtraInfoLogger = BaseLogger[
     # We want to utilize the old result while overriding it
     _result <- result
   ][
-    result = ^.extra_info.cat(y=_result)!
+    result = ^.extra_info + _result
   ]
 ]
 

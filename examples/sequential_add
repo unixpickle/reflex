@@ -2,13 +2,9 @@
 IntSum = {
   i = 0
   sum = 0
-  result = i.select(
-    true = @(
-      i := i.sub(y=1)!
-      sum := sum.add(y=i)!
-    )!
-    false = sum 
-  )!
+  result = i
+    ? @(i := i - 1, sum := sum + i)!
+    : sum
 }
 
 result = IntSum(i=10000)!

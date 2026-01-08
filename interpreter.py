@@ -1,16 +1,18 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable
+from typing import Callable, Literal, Type
 from weakref import WeakKeyDictionary
 
 from nodes import (
     Access,
     AncestorLookup,
     BackEdge,
+    BinaryOp,
     Block,
     BuiltInFn,
     Call,
     CloneAttr,
+    Conditional,
     Eager,
     Identifier,
     IntLit,
@@ -38,11 +40,32 @@ class Select(BuiltInFn):
     pass
 
 
+@dataclass
+class IntLogicalAnd(BuiltInFn):
+    pass
+
+
+@dataclass
+class IntLogicalOr(BuiltInFn):
+    pass
+
+
 def int_op_block(parent: Block, fn: Callable[[int, int], int]) -> Block:
     result = Block(defs=[])
     result.defs = dict(
         x=BackEdge(base=parent),
         result=IntOp(context=BackEdge(base=result), fn=fn),
+    )
+    return result
+
+
+def int_logical_op_block(
+    parent: Block, op: Type[IntLogicalAnd] | Type[IntLogicalOr]
+) -> Block:
+    result = Block(defs=[])
+    result.defs = dict(
+        x=BackEdge(base=parent),
+        result=op(context=BackEdge(base=result)),
     )
     return result
 
@@ -60,6 +83,7 @@ def int_to_block(node: IntLit) -> Block:
             add=int_op_block(result, lambda x, y: x + y),
             sub=int_op_block(result, lambda x, y: x - y),
             eq=int_op_block(result, lambda x, y: int(x == y)),
+            ne=int_op_block(result, lambda x, y: int(x != y)),
             lt=int_op_block(result, lambda x, y: int(x < y)),
             gt=int_op_block(result, lambda x, y: int(x > y)),
             le=int_op_block(result, lambda x, y: int(x <= y)),
@@ -70,6 +94,8 @@ def int_to_block(node: IntLit) -> Block:
             bit_and=int_op_block(result, lambda x, y: x & y),
             bit_or=int_op_block(result, lambda x, y: x | y),
             bit_xor=int_op_block(result, lambda x, y: x ^ y),
+            logical_and=int_logical_op_block(result, IntLogicalAnd),
+            logical_or=int_logical_op_block(result, IntLogicalOr),
             str=IntStr(context=BackEdge(base=result)),
             chr=IntChr(context=BackEdge(base=result)),
             select=select_block,
@@ -83,9 +109,21 @@ class StrCat(BuiltInFn):
     pass
 
 
+ComparisonOp = Literal["==", "!=", "<", ">", "<=", ">="]
+
+
 @dataclass
-class StrEq(BuiltInFn):
-    pass
+class StrComparison(BuiltInFn):
+    op: ComparisonOp
+
+    def lazy_clone(
+        self, overrides: WeakKeyDictionary[Node, Node] | None = None
+    ) -> Node:
+        result = type(self)(context=self.context, op=self.op)
+        result.clone_overrides = (overrides or WeakKeyDictionary()) | (
+            self.clone_overrides or WeakKeyDictionary()
+        )
+        return result
 
 
 @dataclass
@@ -115,10 +153,10 @@ def str_to_block(node: StringLit) -> Block:
                     result=StrCat(context=BackEdge(base=method_block)),
                 ),
             ),
-            eq=str_method(
+            add=str_method(
                 result,
                 lambda method_block: dict(
-                    result=StrEq(context=BackEdge(base=method_block)),
+                    result=StrCat(context=BackEdge(base=method_block)),
                 ),
             ),
             len=StrLen(context=BackEdge(base=result)),
@@ -132,16 +170,30 @@ def str_to_block(node: StringLit) -> Block:
             ),
         )
     )
+    for op, name in [
+        ("<=", "le"),
+        (">=", "ge"),
+        ("==", "eq"),
+        ("!=", "ne"),
+        ("<", "lt"),
+        (">", "gt"),
+    ]:
+        result.defs[name] = str_method(
+            result,
+            lambda method_block: dict(
+                result=StrComparison(context=BackEdge(base=method_block), op=op),
+            ),
+        )
     return result
 
 
 def block_get(block: Block | Override, key: str) -> Node:
-    assert (
-        block.clone_overrides is None
-    ), "cannot access a block before its clone is propagated"
-    assert isinstance(
-        block, (Block, Override)
-    ), f"cannot get key {key!r} of node type {type(block)}"
+    assert block.clone_overrides is None, (
+        "cannot access a block before its clone is propagated"
+    )
+    assert isinstance(block, (Block, Override)), (
+        f"cannot get key {key!r} of node type {type(block)}"
+    )
     if key in block.defs:
         return block.defs[key]
     raise KeyError(f"object has no key {key!r}, keys are {list(block.defs.keys())!r}")
@@ -186,6 +238,38 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
             base=preprocess(parents, expr.base),
             defs={k: preprocess(parents, v) for k, v in expr.defs.items()},
         )
+    elif isinstance(expr, BinaryOp):
+        fn_name = {
+            "==": "eq",
+            "!=": "ne",
+            "<": "lt",
+            ">": "gt",
+            ">=": "ge",
+            "<=": "le",
+            "+": "add",
+            "-": "sub",
+            "/": "div",
+            "*": "mul",
+            "%": "mod",
+            "&&": "logical_and",
+            "||": "logical_or",
+        }
+        new_expr = Access(
+            base=Call(
+                base=Access(base=expr.x, attr=fn_name[expr.op]), defs=dict(y=expr.y)
+            ),
+            attr="result",
+        )
+        return preprocess(parents, new_expr)
+    elif isinstance(expr, Conditional):
+        new_expr = Access(
+            base=Call(
+                base=Access(base=expr.cond, attr="select"),
+                defs=dict(true=expr.a, false=expr.b),
+            ),
+            attr="result",
+        )
+        return preprocess(parents, new_expr)
     elif isinstance(expr, IntLit):
         return int_to_block(expr)
     elif isinstance(expr, StringLit):
@@ -252,6 +336,14 @@ def evaluate_result(expr: Node) -> Node:
         value = int_to_block(IntLit(value=expr.fn(x.value, y.value)))
         return None, value
 
+    def _logical_int_op_after_x(value: Node, *, expr: Node, is_or: bool):
+        x = value
+        assert isinstance(x, IntLit), f"{x=}"
+        if (is_or and x.value) or (not is_or and not x.value):
+            return None, int_to_block(x)
+        expr = Access(base=expr.context, attr="y")
+        return expr, None
+
     def _select_after_cond(value: Node, *, expr: Node):
         cond = value
         assert isinstance(cond, IntLit), f"{cond=}"
@@ -289,20 +381,34 @@ def evaluate_result(expr: Node) -> Node:
         value = str_to_block(StringLit(value=x.value + y.value))
         return None, value
 
-    def _streq_after_x(value: Node, *, expr: Node):
+    def _strcmp_after_x(value: Node, *, expr: Node, op: ComparisonOp):
         x = value
         assert isinstance(x, StringLit), f"{x=}"
-        stack.append(partial(_streq_apply, x=x))
+        stack.append(partial(_strcmp_apply, x=x, op=op))
         expr = Access(
             base=Access(base=expr.context, attr="y"),
             attr="_inner",
         )
         return expr, None
 
-    def _streq_apply(value: Node, *, x: Node):
+    def _strcmp_apply(value: Node, *, x: Node, op: ComparisonOp):
         y = value
         assert isinstance(y, StringLit), f"{y=}"
-        value = int_to_block(IntLit(value=int(x.value == y.value)))
+        if op == "==":
+            result = x.value == y.value
+        elif op == "<":
+            result = x.value < y.value
+        elif op == "<=":
+            result = x.value <= y.value
+        elif op == ">":
+            result = x.value > y.value
+        elif op == ">=":
+            result = x.value >= y.value
+        elif op == "!=":
+            result = x.value != y.value
+        else:
+            raise ValueError(f"Unsupported comparison operator: {op}")
+        value = int_to_block(IntLit(value=int(result)))
         return None, value
 
     def _strlen_after_x(value: Node):
@@ -348,9 +454,9 @@ def evaluate_result(expr: Node) -> Node:
         return None, block_get(block, attrs[1])
 
     while True:
-        assert not isinstance(
-            expr, (Identifier, SelfRef)
-        ), f"block type should not exist after preprocessing: {type(expr)}"
+        assert not isinstance(expr, (Identifier, SelfRef)), (
+            f"block type should not exist after preprocessing: {type(expr)}"
+        )
         expr.propagate_clone()
 
         if isinstance(expr, Access):
@@ -366,6 +472,15 @@ def evaluate_result(expr: Node) -> Node:
         elif isinstance(expr, IntOp):
             stack.append(partial(_intop_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
+        elif isinstance(expr, (IntLogicalOr, IntLogicalAnd)):
+            stack.append(
+                partial(
+                    _logical_int_op_after_x,
+                    expr=expr,
+                    is_or=isinstance(expr, IntLogicalOr),
+                )
+            )
+            expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
         elif isinstance(expr, Select):
             stack.append(partial(_select_after_cond, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="cond"), attr="_inner")
@@ -378,8 +493,8 @@ def evaluate_result(expr: Node) -> Node:
         elif isinstance(expr, StrCat):
             stack.append(partial(_strcat_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
-        elif isinstance(expr, StrEq):
-            stack.append(partial(_streq_after_x, expr=expr))
+        elif isinstance(expr, StrComparison):
+            stack.append(partial(_strcmp_after_x, expr=expr, op=expr.op))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
         elif isinstance(expr, StrLen):
             stack.append(_strlen_after_x)

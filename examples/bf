@@ -2,11 +2,6 @@
 # Brainf*ck interpreter #
 #########################
 
-# Helper to perform the wraparound logic in a memory cell
-wrap_int = {
-  result = x.mod[y=256]!
-}
-
 # A stack which is prefilled with infinite zeroes.
 Stack = {
   prefix = ^.Stack # infinite prefix of all 0's
@@ -35,20 +30,20 @@ Tape = {
   )
 
   increment = @(
-    left := left(item:=^^.wrap_int(x=cur.add(y=1)!)!)
+    left := left(item:=(cur + 1) % 256)
   )
   decrement = @(
-    left := left(item:=^^.wrap_int(x=cur.sub(y=1)!)!)
+    left := left(item:=(cur - 1) % 256)
   )
 
   # Unit test for moving around the tape; test! should be 1.
   test = ^^.unit_test[
     t = ^^.Tape.increment.move_right.increment.increment.move_left.move_left
-    a = t.cur.eq[y=0]!
-    b = t.move_right.cur.eq[y=1]!
-    c = t.move_right.move_right.cur.eq[y=2]!
-    d = t.move_right.move_right.move_right.cur.eq[y=0]!
-    e = t.move_right.move_right.move_right.move_left.cur.eq[y=2]!
+    a = t.cur == 0
+    b = t.move_right.cur == 1
+    c = t.move_right.move_right.cur == 2
+    d = t.move_right.move_right.move_right.cur == 0
+    e = t.move_right.move_right.move_right.move_left.cur == 2
   ]
 }
 
@@ -57,29 +52,26 @@ Tape = {
 Program = {
   ip = 0 # instruction pointer
 
-  cur_inst = code.substr(start=ip end=ip.add(y=1)!)!
-  advanced = @(ip:=ip.add[y=1]!)
-  rewound = @(ip:=ip.sub[y=1]!)
+  cur_inst = code.substr(start=ip end=ip + 1)!
+  advanced = @(ip:=ip + 1)
+  rewound = @(ip:=ip - 1)
 
   # Matching routine for brackets
   # Arguments: next_matcher, open_symbol, close_symbol
   _matcher = {
     depth = 0
 
-    on_open = next_matcher(depth:=depth.add[y=1]!)!
-    on_close = depth.le[y=1]!.select(
-      true = ^.advanced
-      false = next_matcher(depth:=depth.sub[y=1]!)!
-    )!
+    on_open = next_matcher(depth:=depth + 1)!
+    on_close = depth <= 1
+      ? ^.advanced
+      : next_matcher(depth:=depth - 1)!
     on_other = next_matcher(depth:=depth)!
 
-    result = ^.cur_inst.eq(y=open_symbol)!.select(
-      true = on_open
-      false = ^.cur_inst.eq(y=close_symbol)!.select(
-        true = on_close
-        false = on_other
-      )!
-    )!
+    result = ^.cur_inst == open_symbol
+      ? on_open
+      : ^.cur_inst == close_symbol
+        ? on_close
+        : on_other
   }
 
   # Jump to a matching close bracket for an open bracket, then advance.
@@ -90,14 +82,14 @@ Program = {
   match_close = _match_close!
   _match_close = _matcher(next_matcher=rewound._match_close, open_symbol="]", close_symbol="[")
 
-  # Unit test for matching brackets; result is 1 when passed. 
+  # Unit test for matching brackets; result is 1 when passed.
   test = ^^.unit_test[
     p = ^^.Program[code=".[.[..]<><>[]].[]"]
-    a = p.cur_inst.eq[y="."]!
-    b = p.advanced.match_open.ip.eq[y=14]!
-    c = p.advanced.advanced.advanced.match_open.ip.eq[y=7]!
-    d = p.advanced.advanced.advanced.match_open.rewound.match_close.ip.eq[y=4]!
-    e = p[ip=13].match_close.ip.eq[y=2]!
+    a = p.cur_inst == "."
+    b = p.advanced.match_open.ip == 14
+    c = p.advanced.advanced.advanced.match_open.ip == 7
+    d = p.advanced.advanced.advanced.match_open.rewound.match_close.ip == 4
+    e = p[ip=13].match_close.ip == 2
   ]
 }
 
@@ -109,14 +101,14 @@ Interpreter = {
   tape = ^^.Tape
   output = ""
 
-  is_open_bracket = program.cur_inst.eq[y="["]!
-  is_close_bracket = program.cur_inst.eq[y="]"]!
-  is_lt = program.cur_inst.eq[y="<"]!
-  is_gt = program.cur_inst.eq[y=">"]!
-  is_plus = program.cur_inst.eq[y="+"]!
-  is_minus = program.cur_inst.eq[y="-"]!
-  is_dot = program.cur_inst.eq[y="."]!
-  is_done = program.cur_inst.eq[y=""]!
+  is_open_bracket = program.cur_inst == "["
+  is_close_bracket = program.cur_inst == "]"
+  is_lt = program.cur_inst == "<"
+  is_gt = program.cur_inst == ">"
+  is_plus = program.cur_inst == "+"
+  is_minus = program.cur_inst == "-"
+  is_dot = program.cur_inst == "."
+  is_done = program.cur_inst == ""
 
   stop = @
   step = @(program:=program.advanced)
@@ -124,52 +116,32 @@ Interpreter = {
   run_gt = step(tape:=tape.move_right)!
   run_minus = step(tape:=tape.decrement)!
   run_plus = step(tape:=tape.increment)!
-  run_dot = step(output:=output.cat(y=tape.cur.chr)!)!
+  run_dot = step(output:=output + tape.cur.chr)!
   run_open_bracket = @(
-    program := tape.cur.select(
-      false = program.match_open
-      true = program.advanced
-    )!
+    program := tape.cur ? program.advanced :  program.match_open
   )!
   run_close_bracket = @(
-    program := tape.cur.select(
-      false := program.advanced
-      true := program.match_close
-    )!
+    program := tape.cur ? program.match_close : program.advanced
   )!
 
-  result = is_open_bracket.select[
-    true = ^^.run_open_bracket
-    false = ^^.is_close_bracket.select[
-      true = ^^.run_close_bracket
-      false = ^^.is_lt.select[
-        true = ^^.run_lt
-        false = ^^.is_gt.select[
-          true = ^^.run_gt
-          false = ^^.is_plus.select[
-            true = ^^.run_plus
-            false = ^^.is_minus.select[
-              true = ^^.run_minus
-              false = ^^.is_dot.select[
-                true = ^^.run_dot
-                false = ^^.is_done.select[
-                  false = ^^.step!
-                  true = ^^.stop
-                ]!
-              ]!
-            ]!
-          ]!
-        ]!
-      ]!
-    ]!
-  ]!
+  result =
+    is_open_bracket ? run_open_bracket :
+    is_close_bracket ? run_close_bracket :
+    is_lt ? run_lt :
+    is_gt ? run_gt :
+    is_plus ? run_plus :
+    is_minus ? run_minus :
+    is_dot ? run_dot :
+    is_done
+      ? stop
+      : step!
 }
 
 # Override this to create a unit test, where conditions are
 # implemented in definitions 'a' through 'e'
 unit_test = {
   a = 1, b = 1, c = 1, d = 1, e = 1
-  result = a.bit_and[y=^.b]!.bit_and[y=^.c]!.bit_and[y=^.d]!.bit_and[y=^.e]!
+  result = a && b && c && d && e
 }
 
 # Classic hello world

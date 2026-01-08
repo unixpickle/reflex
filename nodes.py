@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 from weakref import WeakKeyDictionary
 
@@ -199,6 +199,51 @@ class Eager(Node):
     def propagate_clone(self):
         if overrides := self.clone_overrides:
             self.base = self.base.lazy_clone(overrides=overrides)
+            self.clone_overrides = None
+
+
+@dataclass(eq=False)
+class Conditional(Node):
+    cond: Node
+    a: Node
+    b: Node
+
+    def lazy_clone(
+        self, overrides: WeakKeyDictionary[Node, Node] | None = None
+    ) -> Node:
+        result = Conditional(cond=self.cond, a=self.a, b=self.b)
+        result.clone_overrides = (overrides or _Empty) | (
+            self.clone_overrides or _Empty
+        )
+        return result
+
+    def propagate_clone(self):
+        if overrides := self.clone_overrides:
+            self.a = self.a.lazy_clone(overrides=overrides)
+            self.b = self.b.lazy_clone(overrides=overrides)
+            self.c = self.c.lazy_clone(overrides=overrides)
+            self.clone_overrides = None
+
+
+@dataclass(eq=False)
+class BinaryOp(Node):
+    x: Node
+    y: Node
+    op: str
+
+    def lazy_clone(
+        self, overrides: WeakKeyDictionary[Node, Node] | None = None
+    ) -> Node:
+        result = BinaryOp(x=self.x, y=self.y, op=self.op)
+        result.clone_overrides = (overrides or _Empty) | (
+            self.clone_overrides or _Empty
+        )
+        return result
+
+    def propagate_clone(self):
+        if overrides := self.clone_overrides:
+            self.x = self.x.lazy_clone(overrides=overrides)
+            self.y = self.y.lazy_clone(overrides=overrides)
             self.clone_overrides = None
 
 

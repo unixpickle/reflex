@@ -19,14 +19,15 @@ class Tokenizer:
         self.i = 0
         self.line = 1
         self.col = 1
-        punctuation = set("{}[]().=,")
+        punctuation = set("{}[]().=,+-/*:?<>%")
         self.singles = dict(zip(punctuation, punctuation)) | {
             "^": "PARENT",
             "@": "SELF",
-            "\n": "NEWLINE",
             "!": "UNWRAP",
         }
-        self.whitespace = set(" \t\r")
+        double_punct = ["<-", ":=", "==", "<=", ">=", "!=", "||", "&&"]
+        self.doubles = {"^^": "ANCESTOR"} | dict(zip(double_punct, double_punct))
+        self.whitespace = set(" \t\r\n")
 
     def tokens(self) -> list[Token]:
         result = []
@@ -42,18 +43,13 @@ class Tokenizer:
         if ch in self.whitespace:
             self.adv()
             return None
-        elif ch == "^" and self.peek() == "^":  # must run before singles
-            res = Token("ANCESTOR", "^^", self.line, self.col)
+        elif ch + self.peek() in self.doubles:  # must run before singles
+            t = ch + self.peek()
+            res = Token(self.doubles[t], t, self.line, self.col)
             self.adv(2)
             return res
-        elif ch == ":" and self.peek() == "=":
-            res = Token(":=", ":=", self.line, self.col)
-            self.adv(2)
-            return res
-        elif ch == "<" and self.peek() == "-":
-            res = Token("<-", "<-", self.line, self.col)
-            self.adv(2)
-            return res
+        elif ch.isdigit() or (ch == "-" and self.peek().isdigit()):
+            return self.parse_int_lit()
         elif ch in self.singles:
             res = Token(self.singles[ch], ch, self.line, self.col)
             self.adv()
@@ -64,8 +60,6 @@ class Tokenizer:
             while (x := self.cur) and x != "\n":
                 self.adv()
             return None
-        elif ch.isdigit() or (ch == "-" and self.peek().isdigit()):
-            return self.parse_int_lit()
         elif ch.isalpha() or ch == "_":
             return self.parse_identifier()
         else:

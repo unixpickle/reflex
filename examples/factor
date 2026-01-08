@@ -1,6 +1,6 @@
 factor = {
   f = 2
-  next_result = @[f=^.f.add[y=1]!]!
-  result = x.mod[y=^.f]!.select[false=^.f, true=^.next_result]!
+  next_result = @(f:=f + 1)!
+  result = x % f ? next_result : f
 }
 result = factor[x=533]!
