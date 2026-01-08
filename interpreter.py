@@ -1,43 +1,26 @@
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable
+from weakref import WeakKeyDictionary
 
-from parser import (
+from nodes import (
     Access,
     AncestorLookup,
+    BackEdge,
     Block,
+    BuiltInFn,
     Call,
     CloneAttr,
     Eager,
     Identifier,
     IntLit,
+    IntOp,
     Node,
     Override,
     Parent,
     SelfRef,
     StringLit,
 )
-
-
-@dataclass
-class BackEdge(Node):
-    base: Block | Override
-
-
-@dataclass
-class BuiltInFn(Node):
-    context: BackEdge
-
-    def map(self, f: Callable[[Node], Node]) -> "BuiltInFn":
-        return type(self)(context=f(self.context))
-
-
-@dataclass
-class IntOp(BuiltInFn):
-    fn: Callable[[int, int], int]
-
-    def map(self, f: Callable[[Node], Node]) -> "IntOp":
-        return IntOp(context=f(self.context), fn=self.fn)
 
 
 @dataclass
@@ -153,6 +136,9 @@ def str_to_block(node: StringLit) -> Block:
 
 
 def block_get(block: Block | Override, key: str) -> Node:
+    assert (
+        block.clone_overrides is None
+    ), "cannot access a block before its clone is propagated"
     assert isinstance(
         block, (Block, Override)
     ), f"cannot get key {key!r} of node type {type(block)}"
@@ -214,76 +200,6 @@ def preprocess(parents: list[Block | Override], expr: Node) -> Node:
         raise ValueError(f"type {type(expr)} cannot fill parents")
 
 
-def _clone_blocks(node: Node, result: dict[int, Node]) -> Node:
-    """
-    Walk the tree, not following back edges, and deep-copy any blocks
-    which are found.
-    """
-    if isinstance(node, Access):
-        return Access(base=_clone_blocks(node.base, result), attr=node.attr)
-    elif isinstance(node, Block):
-        if id(node) not in result:
-            result[id(node)] = Block(defs={})
-            result[id(node)].defs = {
-                k: _clone_blocks(v, result) for k, v in node.defs.items()
-            }
-        return result[id(node)]
-    elif isinstance(node, Override):
-        if id(node) not in result:
-            result[id(node)] = Override(base=None, defs={})
-            result[id(node)].base = _clone_blocks(node.base, result)
-            result[id(node)].defs = {
-                k: _clone_blocks(v, result) for k, v in node.defs.items()
-            }
-        return result[id(node)]
-    elif isinstance(node, Call):
-        return Call(
-            base=_clone_blocks(node.base, result),
-            defs={k: _clone_blocks(v, result) for k, v in node.defs.items()},
-        )
-    elif isinstance(node, BackEdge):
-        # Copy the object so we can update the base later.
-        return BackEdge(base=node.base)
-    elif isinstance(node, Eager):
-        return Eager(base=_clone_blocks(node.base, result))
-    elif isinstance(node, BuiltInFn):
-        return node.map(lambda x: _clone_blocks(x, result))
-    elif isinstance(node, (IntLit, StringLit, CloneAttr)):
-        return node
-    else:
-        raise ValueError(f"cannot clone block: {type(node)}")
-
-
-def _replace_back_edges(node: Node, mapping: dict[int, Node]) -> Node:
-    if isinstance(node, Access):
-        _replace_back_edges(node.base, mapping)
-    elif isinstance(node, Block):
-        for d in node.defs.values():
-            _replace_back_edges(d, mapping)
-    elif isinstance(node, (Call, Override)):
-        _replace_back_edges(node.base, mapping)
-        for d in node.defs.values():
-            _replace_back_edges(d, mapping)
-    elif isinstance(node, BackEdge):
-        if id(node.base) in mapping:
-            node.base = mapping[id(node.base)]
-    elif isinstance(node, Eager):
-        _replace_back_edges(node.base, mapping)
-    elif isinstance(node, BuiltInFn):
-        node.map(lambda x: _replace_back_edges(x, mapping))
-    elif isinstance(node, (IntLit, StringLit, CloneAttr)):
-        pass
-    else:
-        raise ValueError(f"cannot clone block: {type(node)}")
-
-
-def clone_tree(node: Node) -> Node:
-    copies = dict()
-    new_node = _clone_blocks(node, copies)
-    _replace_back_edges(new_node, copies)
-    return new_node
-
-
 def evaluate_result(expr: Node) -> Node:
     """
     Non-recursive evaluator using an explicit continuation stack.
@@ -305,12 +221,17 @@ def evaluate_result(expr: Node) -> Node:
 
     def _override_after_base(value: Node, *, override: Call | Override):
         base_block = value
-        new_block = clone_tree(base_block)
-        new_block.defs = new_block.defs.copy()
+        new_block = base_block.lazy_clone()
+
+        # We want to replace the base_block with new_block in all of the
+        # existing definitions, but not the new definitions.
+        new_block.propagate_clone()
+
         for k, v in override.defs.items():
-            new_def = clone_tree(v)
-            _replace_back_edges(new_def, {id(override): new_block})
-            new_block.defs[k] = new_def
+            new_block.defs[k] = v.lazy_clone(
+                overrides=WeakKeyDictionary({override: new_block})
+            )
+
         # Return the block as an expr to evaluate any eager fields before
         # continuing.
         return new_block, None
@@ -420,7 +341,7 @@ def evaluate_result(expr: Node) -> Node:
         return None, value
 
     def _eager_eval(value: Node, *, block: Node, attrs: list[str]):
-        block.defs[attrs[0]] = value
+        block.defs[attrs[0]] = value.lazy_clone()
         if len(attrs) == 1:
             return block, None
         stack.append(partial(_eager_eval, block=block, attrs=attrs[1:]))
@@ -430,6 +351,7 @@ def evaluate_result(expr: Node) -> Node:
         assert not isinstance(
             expr, (Identifier, SelfRef)
         ), f"block type should not exist after preprocessing: {type(expr)}"
+        expr.propagate_clone()
 
         if isinstance(expr, Access):
             stack.append(partial(_access_after_base, attr=expr.attr))
@@ -466,11 +388,12 @@ def evaluate_result(expr: Node) -> Node:
             stack.append(partial(_strsubstr_after_x, expr=expr))
             expr = Access(base=Access(base=expr.context, attr="x"), attr="_inner")
         elif isinstance(expr, Block) and (attrs := attr_clones(expr)):
-            expr = clone_tree(expr)
+            expr = expr.lazy_clone()
             for target, source in attrs:
                 expr.defs[target] = expr.defs[source]
         elif isinstance(expr, Block) and (attrs := eager_keys(expr)):
-            expr = clone_tree(expr)
+            expr = expr.lazy_clone()
+            expr.propagate_clone()
             stack.append(partial(_eager_eval, block=expr, attrs=attrs))
             expr = block_get(expr, attrs[0])
         else:
@@ -487,6 +410,7 @@ def evaluate_result(expr: Node) -> Node:
                     break
                 else:
                     value = result[1]
+                    value.propagate_clone()
 
 
 def eager_keys(block: Block) -> str | None:

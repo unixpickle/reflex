@@ -1,73 +1,21 @@
 from dataclasses import dataclass, field
 
 from lexer import tokenize
-
-
-class Node:
-    pass
-
-
-@dataclass
-class Block(Node):
-    defs: dict[str, Node]
-
-
-@dataclass
-class Identifier(Node):
-    name: str
-
-
-@dataclass
-class IntLit(Node):
-    value: int
-
-
-@dataclass
-class StringLit(Node):
-    value: str
-
-
-@dataclass
-class SelfRef(Node):
-    pass
-
-
-@dataclass
-class Parent(Node):
-    depth: int
-
-
-@dataclass
-class AncestorLookup(Node):
-    name: str
-
-
-@dataclass
-class Access(Node):
-    base: Node
-    attr: str
-
-
-@dataclass
-class Override(Node):
-    base: Node
-    defs: dict[str, Node]
-
-
-@dataclass
-class Call(Node):
-    base: Node
-    defs: dict[str, Node]
-
-
-@dataclass
-class Eager(Node):
-    base: Node
-
-
-@dataclass
-class CloneAttr(Node):
-    attr: str
+from nodes import (
+    Access,
+    AncestorLookup,
+    Block,
+    Call,
+    CloneAttr,
+    Eager,
+    Identifier,
+    IntLit,
+    Node,
+    Override,
+    Parent,
+    SelfRef,
+    StringLit,
+)
 
 
 @dataclass
@@ -125,7 +73,7 @@ class Parser:
         expr = self.parse_expr()
         return Definition(name, expr if eq.typ == "=" else Eager(base=expr))
 
-    def parse_defs_until(self, stop) -> dict[str, Node]:
+    def parse_defs_until(self, stop, allow_eager: bool = False) -> dict[str, Node]:
         defs = {}
         self.consume_delims()
         while self.peek().typ not in stop:
@@ -133,6 +81,10 @@ class Parser:
             d = self.parse_definition()
             if d.name in defs:
                 raise ParseError(f"Redefinition of {d.name!r} at {start}")
+            elif not allow_eager and isinstance(d.expr, Eager):
+                raise ParseError(
+                    f"Eager definition is not allowed in this context at {start}"
+                )
             defs[d.name] = d.expr
             self.consume_delims()
         return defs
@@ -158,7 +110,7 @@ class Parser:
                 node = Override(node, defs)
             elif self.peek().typ == "(":
                 self.expect("(")
-                defs = self.parse_defs_until({")"})
+                defs = self.parse_defs_until({")"}, allow_eager=True)
                 self.expect(")")
                 node = Call(node, defs)
             else:

@@ -1,6 +1,7 @@
 import sys
-from interpreter import block_get, program_result
 from parser import parse_module
+
+from interpreter import block_get, program_result
 
 
 def main():
