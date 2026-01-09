@@ -1,0 +1,142 @@
+# Self-balancing binary search tree (AVL) to sort numbers.
+
+# Non-empty AVL node
+AVLNode = {
+  key = 0
+  left = ^.AVLEmpty
+  right = ^.AVLEmpty
+
+  left_height = left.height
+  right_height = right.height
+  height = (left_height > right_height ? left_height : right_height) + 1
+
+  # When creating a node, unwrap it to cache height
+  result = @(height:=height)
+
+  balance = left_height - right_height
+
+  # Rotate this node to the left
+  rotate_left = {
+    new_left = ^^.AVLNode(
+      key := ^.key
+      left := ^.left
+      right := ^.right.left
+    )!
+    result = ^^.AVLNode(
+      key := ^.right.key
+      left := new_left
+      right := ^.right.right
+    )!
+  }
+
+  # Rotate this node to the right
+  rotate_right = {
+    new_right = ^^.AVLNode(
+      key := ^.key
+      left := ^.left.right
+      right := ^.right
+    )!
+    result = ^^.AVLNode(
+      key := ^.left.key
+      left := ^.left.left
+      right := new_right
+    )!
+  }
+
+  # Rebalance this node if it has become unbalanced
+  rebalance = {
+    result =
+      ^.balance > 1 && ^.left.balance >= 0
+        ? rotate_right!
+        : ^.balance > 1 && ^.left.balance < 0
+          ? ^^.AVLNode(
+              key = ^.key
+              left = ^.left.rotate_left!
+              right = ^.right
+            )!.rotate_right!
+          : ^.balance < -1 && ^.right.balance <= 0
+            ? rotate_left!
+            : ^.balance < -1 && ^.right.balance > 0
+              ? ^^.AVLNode(
+                  key = ^.key
+                  left = ^.left
+                  right = ^.right.rotate_right!
+                )!.rotate_left!
+              : ^
+  }
+
+  # Insert a value into this subtree
+  insert = {
+    go_left = v <= ^.key
+
+    new_left = go_left
+      ? ^.left.insert(v:=v)!
+      : ^.left
+
+    new_right = go_left
+      ? ^.right
+      : ^.right.insert(v:=v)!
+
+    updated = ^^.AVLNode(
+      key := ^.key
+      left := new_left
+      right := new_right
+    )!
+
+    result = updated.rebalance!
+  }
+
+  # In-order traversal to build a space-separated string
+  inorder = {
+    left_str = ^.left.inorder!
+    right_str = ^.right.inorder!
+
+    self_str = ^.key.str
+
+    with_left = left_str == ""
+      ? self_str
+      : left_str + " " + self_str
+
+    result = right_str == ""
+      ? with_left
+      : with_left + " " + right_str
+  }
+}
+
+# Empty tree node (sentinel)
+AVLEmpty = {
+  is_empty = 1
+  height = 0
+  balance = 0
+
+  # Inserting into an empty node creates a new singleton AVLNode
+  insert = {
+    result = ^^.AVLNode(
+      key := v
+      left = ^
+      right = ^
+    )!
+  }
+
+  # In-order traversal of an empty tree is the empty string
+  inorder = {
+    result = ""
+  }
+}
+
+# Build a tree by inserting some numbers (unsorted order)
+tree = AVLEmpty
+  .insert[v=7]!
+  .insert[v=2]!
+  .insert[v=9]!
+  .insert[v=1]!
+  .insert[v=5]!
+  .insert[v=8]!
+  .insert[v=3]!
+  .insert[v=6]!
+  .insert[v=4]!
+
+# Final program result: all numbers in sorted order,
+# separated by single spaces.
+# For the above inserts, this will be: "1 2 3 4 5 6 7 8 9"
+result = tree.inorder!
