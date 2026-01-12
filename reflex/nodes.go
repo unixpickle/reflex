@@ -1,0 +1,234 @@
+package reflex
+
+type Attr int
+
+type AttrTable struct {
+	m map[string]Attr
+}
+
+func (a *AttrTable) Get(name string) Attr {
+	if x, ok := a.m[name]; ok {
+		return x
+	} else {
+		a.m[name] = Attr(len(a.m))
+		return Attr(len(a.m) - 1)
+	}
+}
+
+func (a *AttrTable) Name(attr Attr) string {
+	for k, v := range a.m {
+		if v == attr {
+			return k
+		}
+	}
+	panic("unknown attr")
+}
+
+type NodeKind int
+
+const (
+	NodeKindAccess NodeKind = iota
+	NodeKindBlock
+	NodeKindOverride
+	NodeKindBackEdge
+	NodeKindIntLit
+	NodeKindStrLit
+	NodeKindBuiltInOp
+)
+
+// A unit value or container inside the interpreter.
+type Node struct {
+	Kind NodeKind
+	Pos  Pos
+
+	BuiltInOp BuiltInOp
+
+	// Access, back edge, or built in op
+	Base *Node
+
+	// Access or Identifier
+	Attr Attr
+
+	// Block / override
+	Defs    DefMap
+	Eager   DefMap
+	Aliases map[Attr]Attr
+
+	// Literals
+	StrLit string
+	IntLit int64
+}
+
+// Clone creates a copy of the node and applies the replacement map,
+// updating it to include the new node for any subnodes.
+func (n *Node) Clone(r *ReplaceMap[Node]) *Node {
+	newNode := &Node{Kind: n.Kind, Pos: n.Pos}
+	switch n.Kind {
+	case NodeKindAccess:
+		newNode.Base = n.Base.Clone(r)
+		newNode.Attr = n.Attr
+	case NodeKindBlock:
+		newMap := r.Inserting(n, newNode)
+		newNode.Defs = maybeFlatten(NewCloneDefMap(n.Defs, newMap))
+	case NodeKindOverride:
+		newMap := r.Inserting(n, newNode)
+		newNode.Base = n.Base.Clone(r)
+		newNode.Defs = maybeFlatten(NewCloneDefMap(n.Defs, newMap))
+		if n.Eager != nil {
+			newNode.Eager = maybeFlatten(NewCloneDefMap(n.Eager, newMap))
+		}
+		newNode.Aliases = n.Aliases
+	case NodeKindBuiltInOp:
+		newNode.BuiltInOp = n.BuiltInOp
+		fallthrough
+	case NodeKindBackEdge:
+		if repl, ok := r.Get(n.Base); ok {
+			newNode.Base = repl
+		} else {
+			newNode.Base = n.Base
+		}
+	case NodeKindStrLit:
+		newNode.StrLit = n.StrLit
+	case NodeKindIntLit:
+		newNode.IntLit = n.IntLit
+	}
+	return newNode
+}
+
+// Defines checks if an attribute is defined in the node.
+func (n *Node) Defines(attr Attr) bool {
+	for _, defs := range []DefMap{n.Defs, n.Eager} {
+		if defs == nil {
+			continue
+		}
+		if _, ok := defs.Get(attr); ok {
+			return true
+		}
+	}
+	if n.Aliases != nil {
+		if _, ok := n.Aliases[attr]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+type DefMap interface {
+	// Indicate how many levels of wrapping this mapping is.
+	// This approximates how inefficient the mapping is compared to a flat one.
+	Depth() int
+
+	// Map creates a map from all the available definitions.
+	// This should only be used when flattening a map.
+	// The result is owned by the caller, who may modify it.
+	Map() map[Attr]*Node
+
+	// Get a single value from the map.
+	Get(k Attr) (*Node, bool)
+}
+
+// A FlatDefMap is the simplest DefMap, which is based on a single Go map.
+type FlatDefMap struct {
+	m map[Attr]*Node
+}
+
+func NewFlatDefMap(m map[Attr]*Node) *FlatDefMap {
+	return &FlatDefMap{m: m}
+}
+
+func (f *FlatDefMap) Depth() int {
+	return 1
+}
+
+func (f *FlatDefMap) Map() map[Attr]*Node {
+	r := map[Attr]*Node{}
+	for k, v := range f.m {
+		r[k] = v
+	}
+	return r
+}
+
+func (f *FlatDefMap) Get(k Attr) (*Node, bool) {
+	x, ok := f.m[k]
+	return x, ok
+}
+
+// A CloneDefMap clones the values in the inner mapping and propagates a replacement mapping
+// for back edges.
+type CloneDefMap struct {
+	inner      DefMap
+	innerDepth int
+	repl       *ReplaceMap[Node]
+	cache      map[Attr]*Node
+}
+
+func NewCloneDefMap(inner DefMap, repl *ReplaceMap[Node]) *CloneDefMap {
+	return &CloneDefMap{inner: inner, innerDepth: inner.Depth(), repl: repl, cache: map[Attr]*Node{}}
+}
+
+func (c *CloneDefMap) Depth() int {
+	return c.innerDepth + 1
+}
+
+func (c *CloneDefMap) Map() map[Attr]*Node {
+	newMapping := map[Attr]*Node{}
+	for k := range c.inner.Map() {
+		newMapping[k], _ = c.Get(k)
+	}
+	return newMapping
+}
+
+func (c *CloneDefMap) Get(k Attr) (*Node, bool) {
+	if result, ok := c.cache[k]; ok {
+		return result, true
+	}
+	if v, ok := c.inner.Get(k); ok {
+		newV := v.Clone(c.repl)
+		c.cache[k] = newV
+		return newV, true
+	}
+	return nil, false
+}
+
+// An OverrideDefMap exposes a new set of attributes that shadow previous definitions in
+// the inner mapping.
+type OverrideDefMap struct {
+	inner      DefMap
+	innerDepth int
+	overrides  DefMap
+}
+
+// NewOverrideDefMap creates a mapping where keys from overrides take precedence over
+// the corresponding keys from inner.
+func NewOverrideDefMap(inner DefMap, overrides DefMap) *OverrideDefMap {
+	return &OverrideDefMap{inner: inner, innerDepth: inner.Depth(), overrides: overrides}
+}
+
+func (o *OverrideDefMap) Depth() int {
+	return o.innerDepth + 1
+}
+
+func (o *OverrideDefMap) Map() map[Attr]*Node {
+	result := o.inner.Map()
+	for k, v := range o.overrides.Map() {
+		result[k] = v
+	}
+	return result
+}
+
+func (o *OverrideDefMap) Get(k Attr) (*Node, bool) {
+	if x, ok := o.overrides.Get(k); ok {
+		return x, true
+	}
+	return o.inner.Get(k)
+}
+
+const depthAfterWhichToFlatten = 8
+
+func maybeFlatten(dm DefMap) DefMap {
+	if dm.Depth() > depthAfterWhichToFlatten {
+		return NewFlatDefMap(dm.Map())
+	} else {
+		return dm
+	}
+}
