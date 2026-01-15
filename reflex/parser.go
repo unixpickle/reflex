@@ -30,13 +30,21 @@ var binaryOpPrecedence = map[string]int{
 	"%":  20,
 }
 
+func Parse(toks []Token) (ASTNode, error) {
+	return NewParser(toks).ParseModule()
+}
+
 type Parser struct {
 	toks []*Token
 	k    int
 }
 
-func NewParser(toks []*Token) *Parser {
-	return &Parser{toks: toks}
+func NewParser(toks []Token) *Parser {
+	tokPtrs := make([]*Token, len(toks))
+	for i := range toks {
+		tokPtrs[i] = &toks[i]
+	}
+	return &Parser{toks: tokPtrs}
 }
 
 func (p *Parser) peek() *Token {
@@ -73,7 +81,7 @@ func (p *Parser) consumeDelims() {
 	}
 }
 
-func (p *Parser) parseModule() (ASTNode, error) {
+func (p *Parser) ParseModule() (ASTNode, error) {
 	startPos := p.peek().Pos
 	defs, _, _, err := p.parseDefsUntil("EOF", false, false)
 	if err != nil {
@@ -104,18 +112,21 @@ func (p *Parser) parseDefsUntil(
 		}
 		t := p.peek()
 		if t.Typ == "=" {
+			p.k += 1
 			val, err := p.parseExpr()
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			defs[name.Val] = val
 		} else if allowAliases && t.Typ == "<-" {
+			p.k += 1
 			ident, err := p.expect("IDENT")
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			aliases[name.Val] = ident.Val
 		} else if allowEager && t.Typ == ":=" {
+			p.k += 1
 			val, err := p.parseExpr()
 			if err != nil {
 				return nil, nil, nil, err
@@ -226,11 +237,11 @@ func (p *Parser) parsePostfix() (ASTNode, error) {
 			}
 			node = &ASTOverride{Pos: open.Pos, Base: node, Defs: defs, Aliases: aliases}
 		} else if open := p.match("("); open != nil {
-			defs, _, eager, err := p.parseDefsUntil("]", false, true)
+			defs, _, eager, err := p.parseDefsUntil(")", false, true)
 			if err != nil {
 				return nil, err
 			}
-			if _, err := p.expect("("); err != nil {
+			if _, err := p.expect(")"); err != nil {
 				return nil, err
 			}
 			node = &ASTCall{Pos: open.Pos, Base: node, Defs: defs, Eager: eager}
@@ -251,6 +262,9 @@ func (p *Parser) parsePrimary() (ASTNode, error) {
 	case "{":
 		defs, _, _, err := p.parseDefsUntil("}", false, false)
 		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect("}"); err != nil {
 			return nil, err
 		}
 		return &ASTBlock{Pos: startPos, Defs: defs}, nil

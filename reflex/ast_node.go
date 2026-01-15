@@ -82,9 +82,14 @@ func (a *ASTAncestorLookup) Node(attrs *AttrTable, parents []*Node) (*Node, erro
 		parent := parents[i]
 		if parent.Defines(attr) {
 			return &Node{
-				Kind: NodeKindBackEdge,
+				Kind: NodeKindAccess,
 				Pos:  a.Pos,
-				Base: parent,
+				Base: &Node{
+					Kind: NodeKindBackEdge,
+					Pos:  a.Pos,
+					Base: parent,
+				},
+				Attr: attrs.Get(a.Attr),
 			}, nil
 		}
 	}
@@ -105,7 +110,7 @@ func (a *ASTBlock) Node(attrs *AttrTable, parents []*Node) (*Node, error) {
 		Pos:  a.Pos,
 		Defs: dummyDefs(attrs, a.Defs),
 	}
-	if defs, err := instantiateDefs(attrs, parents, n, a.Defs); err != nil {
+	if defs, err := instantiateDefs(attrs, append(parents, n), n, a.Defs); err != nil {
 		return nil, err
 	} else {
 		n.Defs = defs
@@ -123,9 +128,8 @@ func dummyDefs[V any](attrs *AttrTable, d map[string]V) DefMap {
 
 func instantiateDefs(attrs *AttrTable, parents []*Node, n *Node, defs map[string]ASTNode) (DefMap, error) {
 	newDefs := map[Attr]*Node{}
-	newParents := append(parents, n)
 	for k, v := range defs {
-		newNode, err := v.Node(attrs, newParents)
+		newNode, err := v.Node(attrs, parents)
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +160,7 @@ func (a *ASTOverride) Node(attrs *AttrTable, parents []*Node) (*Node, error) {
 	for k, v := range a.Aliases {
 		n.Aliases[attrs.Get(k)] = attrs.Get(v)
 	}
-	if defs, err := instantiateDefs(attrs, parents, n, a.Defs); err != nil {
+	if defs, err := instantiateDefs(attrs, append(parents, n), n, a.Defs); err != nil {
 		return nil, err
 	} else {
 		n.Defs = defs

@@ -1,6 +1,9 @@
 package reflex
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // An error raised by the interpreter with a backtrace of callsites that
 // led to the execution error.
@@ -39,18 +42,37 @@ func addTrace(trace []Pos, newPos Pos) []Pos {
 	return truncateTrace(result)
 }
 
+func formatAvailable(attrs *AttrTable, node *Node) string {
+	var strs []string
+	for attr := range node.Defs.Map() {
+		strs = append(strs, fmt.Sprintf("%#v", attrs.Name(attr)))
+	}
+	return strings.Join(strs, ", ")
+}
+
 // Evaluate an expression until it becomes a literal or a block.
 func Evaluate(attrs *AttrTable, node *Node, trace []Pos) (*Node, error) {
 	nest := func(newNode *Node) (*Node, error) {
-		return Evaluate(attrs, node, addTrace(trace, node.Pos))
+		return Evaluate(attrs, newNode, addTrace(trace, node.Pos))
 	}
 
 	switch node.Kind {
 	case NodeKindAccess:
-		obj, ok := node.Base.Defs.Get(node.Attr)
+		base, err := nest(node.Base)
+		if err != nil {
+			return nil, err
+		}
+		if base.Kind != NodeKindBlock {
+			return nil, &InterpreterError{Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind), Trace: trace}
+		}
+		obj, ok := base.Defs.Get(node.Attr)
 		if !ok {
 			return nil, &InterpreterError{
-				Inner: fmt.Errorf("unable to access attribute: %#v", attrs.Name(node.Attr)),
+				Inner: fmt.Errorf(
+					"unable to access attribute: %#v (available: %s)",
+					attrs.Name(node.Attr),
+					formatAvailable(attrs, base),
+				),
 				Trace: trace,
 			}
 		}
@@ -61,11 +83,46 @@ func Evaluate(attrs *AttrTable, node *Node, trace []Pos) (*Node, error) {
 			return nil, err
 		}
 		newBase := base.Clone(nil)
-		newBase.Defs = NewOverrideDefMap(newBase.Defs, node.Defs)
+		newBase.Defs = NewOverrideDefMap(newBase.Defs, NewCloneDefMapSingle(node.Defs, node, newBase))
+
+		if len(node.Aliases) > 0 {
+			aliasMap := map[Attr]*Node{}
+			for dst, src := range node.Aliases {
+				var ok bool
+				aliasMap[dst], ok = newBase.Defs.Get(src)
+				if !ok {
+					return nil, &InterpreterError{
+						Inner: fmt.Errorf(
+							"could not create alias from %s to %s because source attribute does not exist",
+							attrs.Name(src),
+							attrs.Name(dst),
+						),
+						Trace: trace,
+					}
+				}
+			}
+			newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(aliasMap))
+		}
+
+		if node.Eager != nil {
+			newDefs := map[Attr]*Node{}
+			for k, v := range node.Eager.Map() {
+				newDefs[k], err = nest(v)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if len(newDefs) > 0 {
+				newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))
+			}
+		}
+
+		newBase.Defs = MaybeFlatten(newBase.Defs)
+
 		return newBase, nil
 	case NodeKindBackEdge:
 		if node.Base.Kind != NodeKindBlock {
-			panic("unexpected back edge type")
+			panic("unexpected back edge type: " + node.Base.Kind.String())
 		}
 		return node.Base, nil
 	case NodeKindBuiltInOp:
@@ -80,7 +137,7 @@ func Evaluate(attrs *AttrTable, node *Node, trace []Pos) (*Node, error) {
 			}
 			nextResult, err := nest(nextExpr)
 			if err != nil {
-				return nil, &InterpreterError{Inner: err, Trace: trace}
+				return nil, err
 			}
 			op, err = op.Tell(node.Base, nextResult)
 			if err != nil {

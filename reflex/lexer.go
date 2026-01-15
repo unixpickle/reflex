@@ -109,6 +109,16 @@ func (t *Tokenizer) Tokens() ([]Token, error) {
 	return result, nil
 }
 
+func (t *Tokenizer) peekDouble() (string, string, bool) {
+	ch := t.cur()
+	if t.peek() == 0 {
+		return "", "", false
+	}
+	s := string([]rune{ch, t.peek()})
+	typ, ok := t.doubles[s]
+	return s, typ, ok
+}
+
 // nextToken corresponds to Tokenizer.next_token(self).
 func (t *Tokenizer) nextToken() (*Token, error) {
 	ch := t.cur()
@@ -117,17 +127,14 @@ func (t *Tokenizer) nextToken() (*Token, error) {
 	} else if _, ok := t.whitespace[ch]; ok {
 		t.adv(1)
 		return nil, nil
-	} else if t.peek() != 0 {
-		s := string([]rune{ch, t.peek()})
-		if typ, ok := t.doubles[s]; ok {
-			res := &Token{
-				Typ: typ,
-				Val: s,
-				Pos: t.Pos(),
-			}
-			t.adv(2)
-			return res, nil
+	} else if s, typ, ok := t.peekDouble(); ok {
+		res := &Token{
+			Typ: typ,
+			Val: s,
+			Pos: t.Pos(),
 		}
+		t.adv(2)
+		return res, nil
 	} else if unicode.IsDigit(ch) || (ch == '-' && unicode.IsDigit(t.peek())) {
 		return t.parseIntLit(), nil
 	} else if typ, ok := t.singles[ch]; ok {
@@ -152,6 +159,7 @@ func (t *Tokenizer) nextToken() (*Token, error) {
 	} else if unicode.IsLetter(ch) || ch == '_' {
 		return t.parseIdentifier(), nil
 	}
+	println("is it unicode", unicode.IsLetter(ch))
 	return nil, &LexError{
 		Msg: fmt.Sprintf("Unexpected %q", ch), Pos: t.Pos(),
 	}

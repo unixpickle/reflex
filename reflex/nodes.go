@@ -6,6 +6,10 @@ type AttrTable struct {
 	m map[string]Attr
 }
 
+func NewAttrTable() *AttrTable {
+	return &AttrTable{m: map[string]Attr{}}
+}
+
 func (a *AttrTable) Get(name string) Attr {
 	if x, ok := a.m[name]; ok {
 		return x
@@ -35,6 +39,27 @@ const (
 	NodeKindStrLit
 	NodeKindBuiltInOp
 )
+
+func (n NodeKind) String() string {
+	switch n {
+	case NodeKindAccess:
+		return "NodeKindAccess"
+	case NodeKindBlock:
+		return "NodeKindBlock"
+	case NodeKindOverride:
+		return "NodeKindOverride"
+	case NodeKindBackEdge:
+		return "NodeKindBackEdge"
+	case NodeKindIntLit:
+		return "NodeKindIntLit"
+	case NodeKindStrLit:
+		return "NodeKindStrLit"
+	case NodeKindBuiltInOp:
+		return "NodeKindBuiltInOp"
+	default:
+		panic("no node kind")
+	}
+}
 
 // A unit value or container inside the interpreter.
 type Node struct {
@@ -69,13 +94,13 @@ func (n *Node) Clone(r *ReplaceMap[Node]) *Node {
 		newNode.Attr = n.Attr
 	case NodeKindBlock:
 		newMap := r.Inserting(n, newNode)
-		newNode.Defs = maybeFlatten(NewCloneDefMap(n.Defs, newMap))
+		newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
 	case NodeKindOverride:
 		newMap := r.Inserting(n, newNode)
 		newNode.Base = n.Base.Clone(r)
-		newNode.Defs = maybeFlatten(NewCloneDefMap(n.Defs, newMap))
+		newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
 		if n.Eager != nil {
-			newNode.Eager = maybeFlatten(NewCloneDefMap(n.Eager, newMap))
+			newNode.Eager = MaybeFlatten(NewCloneDefMap(n.Eager, newMap))
 		}
 		newNode.Aliases = n.Aliases
 	case NodeKindBuiltInOp:
@@ -166,6 +191,12 @@ func NewCloneDefMap(inner DefMap, repl *ReplaceMap[Node]) *CloneDefMap {
 	return &CloneDefMap{inner: inner, innerDepth: inner.Depth(), repl: repl, cache: map[Attr]*Node{}}
 }
 
+func NewCloneDefMapSingle(inner DefMap, oldNode, newNode *Node) *CloneDefMap {
+	var m *ReplaceMap[Node]
+	m = m.Inserting(oldNode, newNode)
+	return NewCloneDefMap(inner, m)
+}
+
 func (c *CloneDefMap) Depth() int {
 	return c.innerDepth + 1
 }
@@ -225,7 +256,8 @@ func (o *OverrideDefMap) Get(k Attr) (*Node, bool) {
 
 const depthAfterWhichToFlatten = 8
 
-func maybeFlatten(dm DefMap) DefMap {
+// MaybeFlatten precomputes the values in the DefMap if it is too deep.
+func MaybeFlatten(dm DefMap) DefMap {
 	if dm.Depth() > depthAfterWhichToFlatten {
 		return NewFlatDefMap(dm.Map())
 	} else {
