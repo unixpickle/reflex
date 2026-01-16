@@ -20,10 +20,49 @@ func (w *ReplaceMap[K]) Get(k *K) (*K, bool) {
 	return nil, false
 }
 
-// Insert a single replacement to get a new replacement map.
+// Updating adds the updates with higher precedence than w, and
+// follows replacement chains to simplify the mapping.
+func (w *ReplaceMap[K]) Updating(update *ReplaceMap[K]) *ReplaceMap[K] {
+	if w == nil {
+		return update
+	} else if update == nil {
+		return w
+	}
+
+	inverse := make(map[*K]*K, len(w.keys)+len(update.keys))
+	mapping := make(map[*K]*K, len(w.keys)+len(update.keys))
+	for _, d := range []*ReplaceMap[K]{w, update} {
+		for i, weakK := range d.keys {
+			if k := weakK.Value(); k != nil {
+				v := d.values[i]
+				if d == update {
+					if oldK, ok := inverse[k]; ok {
+						delete(mapping, oldK)
+						delete(inverse, k)
+						k = oldK
+					}
+				}
+				mapping[k] = v
+				inverse[v] = k
+			}
+		}
+	}
+	result := new(ReplaceMap[K])
+	for k, v := range mapping {
+		result.keys = append(result.keys, weak.Make(k))
+		result.values = append(result.values, v)
+	}
+	return result
+}
+
+// Inserting adds a single replacement to get a new replacement map.
 func (w *ReplaceMap[K]) Inserting(newK *K, newV *K) *ReplaceMap[K] {
-	var newKeys []weak.Pointer[K]
-	var newValues []*K
+	newCount := 1
+	if w != nil {
+		newCount += len(w.keys)
+	}
+	newKeys := make([]weak.Pointer[K], 0, newCount)
+	newValues := make([]*K, 0, newCount)
 	var found bool
 	if w != nil {
 		for i, k := range w.keys {

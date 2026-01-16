@@ -9,12 +9,12 @@ import (
 // led to the execution error.
 type InterpreterError struct {
 	Inner error
-	Trace []Pos
+	Trace GapStack
 }
 
 func (i *InterpreterError) Error() string {
 	trace := ""
-	for i, x := range i.Trace {
+	for i, x := range i.Trace.Slice() {
 		if len(trace) > 0 {
 			trace += "\n"
 		}
@@ -30,30 +30,20 @@ func (i *InterpreterError) Error() string {
 	return fmt.Sprintf("%s at\n%s", i.Inner, trace)
 }
 
-func truncateTrace(trace []Pos) []Pos {
-	if len(trace) > 20 {
-		return append(append(append([]Pos{}, trace[:10]...), Pos{}), trace[len(trace)-10:]...)
-	}
-	return trace
-}
-
-func addTrace(trace []Pos, newPos Pos) []Pos {
-	result := append(append([]Pos{}, trace...), newPos)
-	return truncateTrace(result)
-}
-
 func formatAvailable(attrs *AttrTable, node *Node) string {
 	var strs []string
-	for attr := range node.Defs.Map() {
+	for attr := range node.Defs.Map(nil) {
 		strs = append(strs, fmt.Sprintf("%#v", attrs.Name(attr)))
 	}
 	return strings.Join(strs, ", ")
 }
 
 // Evaluate an expression until it becomes a literal or a block.
-func Evaluate(attrs *AttrTable, node *Node, trace []Pos) (*Node, error) {
+func Evaluate(attrs *AttrTable, node *Node, trace GapStack) (*Node, error) {
 	nest := func(newNode *Node) (*Node, error) {
-		return Evaluate(attrs, newNode, addTrace(trace, node.Pos))
+		t := trace
+		t.Push(node.Pos)
+		return Evaluate(attrs, newNode, t)
 	}
 
 	switch node.Kind {
@@ -106,7 +96,7 @@ func Evaluate(attrs *AttrTable, node *Node, trace []Pos) (*Node, error) {
 
 		if node.Eager != nil {
 			newDefs := map[Attr]*Node{}
-			for k, v := range node.Eager.Map() {
+			for k, v := range node.Eager.Map(nil) {
 				newDefs[k], err = nest(v)
 				if err != nil {
 					return nil, err

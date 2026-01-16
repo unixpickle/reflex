@@ -48,7 +48,7 @@ func main() {
 		},
 		Attr: attrs.Get("_inner"),
 	}
-	result, err := reflex.Evaluate(attrs, access, []reflex.Pos{})
+	result, err := reflex.Evaluate(attrs, access, reflex.NewGapStack())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to evaluate:", err)
 		os.Exit(1)

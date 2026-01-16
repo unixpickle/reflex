@@ -134,7 +134,9 @@ func testInterpreterOutput[T StrOrInt](t *testing.T, code string, expected T) {
 		},
 		Attr: attrs.Get("_inner"),
 	}
-	result, err := Evaluate(attrs, access, []Pos{{File: "interpreter"}})
+	var gs GapStack
+	gs.Push(Pos{File: "test"})
+	result, err := Evaluate(attrs, access, gs)
 	if err != nil {
 		t.Fatalf("failed to evaluate: %s", err)
 	}
