@@ -39,104 +39,116 @@ func formatAvailable(attrs *AttrTable, node *Node) string {
 }
 
 // Evaluate an expression until it becomes a literal or a block.
-func Evaluate(attrs *AttrTable, node *Node, trace GapStack) (*Node, error) {
-	nest := func(newNode *Node) (*Node, error) {
-		t := trace
-		t.Push(node.Pos)
-		return Evaluate(attrs, newNode, t)
-	}
+func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
+	for {
+		pos := node.Pos
+		newTrace := trace
+		newTrace.Push(pos)
 
-	switch node.Kind {
-	case NodeKindAccess:
-		base, err := nest(node.Base)
-		if err != nil {
-			return nil, err
+		nest := func(newNode *Node) (*Node, error) {
+			return Evaluate(ctx, newNode, newTrace)
 		}
-		if base.Kind != NodeKindBlock {
-			return nil, &InterpreterError{Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind), Trace: trace}
-		}
-		obj, ok := base.Defs.Get(node.Attr)
-		if !ok {
-			return nil, &InterpreterError{
-				Inner: fmt.Errorf(
-					"unable to access attribute: %#v (available: %s)",
-					attrs.Name(node.Attr),
-					formatAvailable(attrs, base),
-				),
-				Trace: trace,
-			}
-		}
-		return nest(obj)
-	case NodeKindOverride:
-		base, err := nest(node.Base)
-		if err != nil {
-			return nil, err
-		}
-		newBase := base.Clone(nil)
-		newBase.Defs = NewOverrideDefMap(newBase.Defs, NewCloneDefMapSingle(node.Defs, node, newBase))
-
-		if len(node.Aliases) > 0 {
-			aliasMap := map[Attr]*Node{}
-			for dst, src := range node.Aliases {
-				var ok bool
-				aliasMap[dst], ok = newBase.Defs.Get(src)
-				if !ok {
-					return nil, &InterpreterError{
-						Inner: fmt.Errorf(
-							"could not create alias from %s to %s because source attribute does not exist",
-							attrs.Name(src),
-							attrs.Name(dst),
-						),
-						Trace: trace,
-					}
-				}
-			}
-			newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(aliasMap))
+		doNext := func(newNode *Node) {
+			node = newNode
+			trace = newTrace
 		}
 
-		if node.Eager != nil {
-			newDefs := map[Attr]*Node{}
-			for k, v := range node.Eager.Map(nil) {
-				newDefs[k], err = nest(v)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if len(newDefs) > 0 {
-				newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))
-			}
-		}
-
-		newBase.Defs = MaybeFlatten(newBase.Defs)
-
-		return newBase, nil
-	case NodeKindBackEdge:
-		if node.Base.Kind != NodeKindBlock {
-			panic("unexpected back edge type: " + node.Base.Kind.String())
-		}
-		return node.Base, nil
-	case NodeKindBuiltInOp:
-		op := node.BuiltInOp
-		for {
-			result, nextExpr, err := op.Next(node.Base)
-			if err != nil {
-				return nil, &InterpreterError{Inner: err, Trace: trace}
-			}
-			if result != nil {
-				return nest(result)
-			}
-			nextResult, err := nest(nextExpr)
+		switch node.Kind {
+		case NodeKindAccess:
+			b := node.Base
+			a := node.Attr
+			node = nil
+			base, err := Evaluate(ctx, b, newTrace)
 			if err != nil {
 				return nil, err
 			}
-			op, err = op.Tell(node.Base, nextResult)
-			if err != nil {
-				return nil, &InterpreterError{Inner: err, Trace: trace}
+			if base.Kind != NodeKindBlock {
+				return nil, &InterpreterError{Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind), Trace: trace}
 			}
+			obj, ok := base.Defs.Get(a)
+			if !ok {
+				return nil, &InterpreterError{
+					Inner: fmt.Errorf(
+						"unable to access attribute: %#v (available: %s)",
+						ctx.Attrs.Name(a),
+						formatAvailable(ctx.Attrs, base),
+					),
+					Trace: trace,
+				}
+			}
+			doNext(obj)
+		case NodeKindOverride:
+			base, err := nest(node.Base)
+			if err != nil {
+				return nil, err
+			}
+			newBase := base.Clone(nil)
+			newBase.Pos = node.Pos
+			newBase.Defs = NewOverrideDefMap(newBase.Defs, NewCloneDefMapSingle(node.Defs, node, newBase))
+
+			if len(node.Aliases) > 0 {
+				aliasMap := map[Attr]*Node{}
+				for dst, src := range node.Aliases {
+					var ok bool
+					aliasMap[dst], ok = newBase.Defs.Get(src)
+					if !ok {
+						return nil, &InterpreterError{
+							Inner: fmt.Errorf(
+								"could not create alias from %s to %s because source attribute does not exist",
+								ctx.Attrs.Name(src),
+								ctx.Attrs.Name(dst),
+							),
+							Trace: trace,
+						}
+					}
+				}
+				newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(aliasMap))
+			}
+
+			if node.Eager != nil {
+				newDefs := map[Attr]*Node{}
+				for k, v := range node.Eager.Map(nil) {
+					result, err := nest(v)
+					if err != nil {
+						return nil, err
+					}
+					newDefs[k] = result.Clone(nil)
+				}
+				if len(newDefs) > 0 {
+					newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))
+				}
+			}
+			newBase.Defs = MaybeFlatten(newBase.Defs)
+			return newBase, nil
+		case NodeKindBackEdge:
+			if node.Base.Kind != NodeKindBlock {
+				panic("unexpected back edge type: " + node.Base.Kind.String())
+			}
+			return node.Base, nil
+		case NodeKindBuiltInOp:
+			op := node.BuiltInOp
+			for {
+				result, nextExpr, err := op.Next(node.Base)
+				if err != nil {
+					return nil, &InterpreterError{Inner: err, Trace: trace}
+				}
+				if result != nil {
+					doNext(result)
+					break
+				}
+				nextResult, err := nest(nextExpr)
+				if err != nil {
+					return nil, err
+				}
+				op, err = op.Tell(node.Base, nextResult)
+				if err != nil {
+					return nil, &InterpreterError{Inner: err, Trace: trace}
+				}
+			}
+		case NodeKindIntLit, NodeKindStrLit, NodeKindBlock:
+			return node, nil
+		default:
+			panic("unknown node type")
 		}
-	case NodeKindIntLit, NodeKindStrLit, NodeKindBlock:
-		return node, nil
-	default:
-		panic("unknown node type")
 	}
 }

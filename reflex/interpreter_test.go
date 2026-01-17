@@ -118,8 +118,8 @@ func testInterpreterOutput[T StrOrInt](t *testing.T, code string, expected T) {
 	if err != nil {
 		t.Fatalf("failed to parse: %s", err)
 	}
-	attrs := NewAttrTable()
-	node, err := parsed.Node(attrs, nil)
+	ctx := NewContext()
+	node, err := parsed.Node(ctx, nil)
 	if err != nil {
 		t.Fatalf("failed to node-ify: %s", err)
 	}
@@ -130,13 +130,13 @@ func testInterpreterOutput[T StrOrInt](t *testing.T, code string, expected T) {
 			Kind: NodeKindAccess,
 			Pos:  Pos{File: "interpreter"},
 			Base: node,
-			Attr: attrs.Get("result"),
+			Attr: ctx.Attrs.Get("result"),
 		},
-		Attr: attrs.Get("_inner"),
+		Attr: ctx.Attrs.Get("_inner"),
 	}
 	var gs GapStack
 	gs.Push(Pos{File: "test"})
-	result, err := Evaluate(attrs, access, gs)
+	result, err := Evaluate(ctx, access, gs)
 	if err != nil {
 		t.Fatalf("failed to evaluate: %s", err)
 	}

@@ -16,7 +16,7 @@ func main() {
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error reading file: %v", err)
+		fmt.Fprintln(os.Stderr, "error reading file:", err)
 		os.Exit(1)
 	}
 
@@ -31,8 +31,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "failed to parse:", err)
 		os.Exit(1)
 	}
-	attrs := reflex.NewAttrTable()
-	node, err := parsed.Node(attrs, nil)
+	ctx := reflex.NewContext()
+	node, err := parsed.Node(ctx, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to process nodes:", err)
 		os.Exit(1)
@@ -44,11 +44,11 @@ func main() {
 			Kind: reflex.NodeKindAccess,
 			Pos:  reflex.Pos{File: "interpreter"},
 			Base: node,
-			Attr: attrs.Get("result"),
+			Attr: ctx.Attrs.Get("result"),
 		},
-		Attr: attrs.Get("_inner"),
+		Attr: ctx.Attrs.Get("_inner"),
 	}
-	result, err := reflex.Evaluate(attrs, access, reflex.NewGapStack())
+	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to evaluate:", err)
 		os.Exit(1)

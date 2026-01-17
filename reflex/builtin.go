@@ -22,14 +22,15 @@ func boolToInt(b bool) int64 {
 	return 0
 }
 
-// IntNode creates a node with all of the built-in int methods.
-func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
+// intNode creates a node with all of the built-in int methods,
+// but without an _inner for the node itself.
+func intNode(ctx *Context) *Node {
+	pos := Pos{File: "<builtin/int>", Line: 0, Col: 0}
+
 	result := &Node{
 		Kind: NodeKindBlock,
-		Pos:  declPos,
+		Pos:  pos,
 	}
-
-	pos := Pos{File: "<builtin>", Line: 0, Col: 0}
 
 	makeBinaryOp := func(fn func(int64, int64) int64) *Node {
 		op := &Node{
@@ -37,16 +38,16 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 			Pos:  pos,
 		}
 		op.Defs = NewFlatDefMap(map[Attr]*Node{
-			attrs.Get("x"): &Node{
+			ctx.Attrs.Get("x"): &Node{
 				Kind: NodeKindBackEdge,
 				Pos:  pos,
 				Base: result,
 			},
-			attrs.Get("result"): &Node{
+			ctx.Attrs.Get("result"): &Node{
 				Kind: NodeKindBuiltInOp,
 				Pos:  pos,
 				Base: op,
-				BuiltInOp: newFnBuiltInOp(attrs, []string{"x._inner", "y._inner"}, func(args map[string]*Node) (*Node, error) {
+				BuiltInOp: newFnBuiltInOp(ctx.Attrs, []string{"x._inner", "y._inner"}, func(args map[string]*Node) (*Node, error) {
 					x := args["x._inner"]
 					y := args["y._inner"]
 					if x.Kind != NodeKindIntLit {
@@ -55,7 +56,7 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 					if y.Kind != NodeKindIntLit {
 						return nil, &BuiltInOpError{Msg: "y argument is not an int value", Pos: y.Pos}
 					}
-					return IntNode(attrs, pos, fn(x.IntLit, y.IntLit)), nil
+					return ctx.IntNode(x.Pos, fn(x.IntLit, y.IntLit)), nil
 				}),
 			},
 		})
@@ -67,16 +68,16 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 			Kind: NodeKindBuiltInOp,
 			Pos:  pos,
 			Base: result,
-			BuiltInOp: newFnBuiltInOp(attrs, []string{"_inner"}, func(args map[string]*Node) (*Node, error) {
+			BuiltInOp: newFnBuiltInOp(ctx.Attrs, []string{"_inner"}, func(args map[string]*Node) (*Node, error) {
 				x := args["_inner"]
 				if x.Kind != NodeKindIntLit {
 					return nil, &BuiltInOpError{Msg: "x argument is not an int value", Pos: x.Pos}
 				}
 				result := fn(x.IntLit)
 				if str, ok := result.(string); ok {
-					return StrNode(attrs, pos, str), nil
+					return ctx.StrNode(x.Pos, str), nil
 				}
-				return IntNode(attrs, pos, result.(int64)), nil
+				return ctx.IntNode(x.Pos, result.(int64)), nil
 			}),
 		}
 	}
@@ -87,12 +88,12 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 			Pos:  pos,
 		}
 		opNode.Defs = NewFlatDefMap(map[Attr]*Node{
-			attrs.Get(selfName): &Node{
+			ctx.Attrs.Get(selfName): &Node{
 				Kind: NodeKindBackEdge,
 				Pos:  pos,
 				Base: result,
 			},
-			attrs.Get("result"): &Node{
+			ctx.Attrs.Get("result"): &Node{
 				Kind:      NodeKindBuiltInOp,
 				Pos:       pos,
 				Base:      opNode,
@@ -103,24 +104,19 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 	}
 
 	result.Defs = NewFlatDefMap(map[Attr]*Node{
-		attrs.Get("_inner"): &Node{
-			Kind:   NodeKindIntLit,
-			Pos:    pos,
-			IntLit: lit,
-		},
-		attrs.Get("add"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("add"): makeBinaryOp(func(x, y int64) int64 {
 			return x + y
 		}),
-		attrs.Get("sub"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("sub"): makeBinaryOp(func(x, y int64) int64 {
 			return x - y
 		}),
-		attrs.Get("div"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("div"): makeBinaryOp(func(x, y int64) int64 {
 			return x / y
 		}),
-		attrs.Get("mul"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("mul"): makeBinaryOp(func(x, y int64) int64 {
 			return x * y
 		}),
-		attrs.Get("mod"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("mod"): makeBinaryOp(func(x, y int64) int64 {
 			r := x % y
 			if r < 0 {
 				if y < 0 {
@@ -131,45 +127,46 @@ func IntNode(attrs *AttrTable, declPos Pos, lit int64) *Node {
 			}
 			return r
 		}),
-		attrs.Get("lt"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("lt"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x < y)
 		}),
-		attrs.Get("gt"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("gt"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x > y)
 		}),
-		attrs.Get("le"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("le"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x <= y)
 		}),
-		attrs.Get("ge"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("ge"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x >= y)
 		}),
-		attrs.Get("eq"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("eq"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x == y)
 		}),
-		attrs.Get("ne"): makeBinaryOp(func(x, y int64) int64 {
+		ctx.Attrs.Get("ne"): makeBinaryOp(func(x, y int64) int64 {
 			return boolToInt(x != y)
 		}),
-		attrs.Get("chr"): makeUnaryOp(func(x int64) any {
+		ctx.Attrs.Get("chr"): makeUnaryOp(func(x int64) any {
 			return string(rune(x))
 		}),
-		attrs.Get("str"): makeUnaryOp(func(x int64) any {
+		ctx.Attrs.Get("str"): makeUnaryOp(func(x int64) any {
 			return strconv.FormatInt(x, 10)
 		}),
-		attrs.Get("select"):      makeSelectOrLogic("cond", newBuiltInSelect(attrs)),
-		attrs.Get("logical_and"): makeSelectOrLogic("x", newBuiltInLogic(attrs, true)),
-		attrs.Get("logical_or"):  makeSelectOrLogic("x", newBuiltInLogic(attrs, false)),
+		ctx.Attrs.Get("select"):      makeSelectOrLogic("cond", newBuiltInSelect(ctx.Attrs)),
+		ctx.Attrs.Get("logical_and"): makeSelectOrLogic("x", newBuiltInLogic(ctx.Attrs, true)),
+		ctx.Attrs.Get("logical_or"):  makeSelectOrLogic("x", newBuiltInLogic(ctx.Attrs, false)),
 	})
 	return result
 }
 
-// StrNode creates a node with all of the built-in string methods.
-func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
+// strNode creates a node with all of the built-in string methods, but
+// without an _inner field for the actual value.
+func strNode(ctx *Context) *Node {
+	pos := Pos{File: "<builtin/str>", Line: 0, Col: 0}
+
 	result := &Node{
 		Kind: NodeKindBlock,
-		Pos:  declPos,
+		Pos:  pos,
 	}
-
-	pos := Pos{File: "<builtin>", Line: 0, Col: 0}
 
 	makeBinaryOp := func(fn func(string, string) any) *Node {
 		opNode := &Node{
@@ -177,16 +174,16 @@ func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
 			Pos:  pos,
 		}
 		opNode.Defs = NewFlatDefMap(map[Attr]*Node{
-			attrs.Get("x"): &Node{
+			ctx.Attrs.Get("x"): &Node{
 				Kind: NodeKindBackEdge,
 				Pos:  pos,
 				Base: result,
 			},
-			attrs.Get("result"): &Node{
+			ctx.Attrs.Get("result"): &Node{
 				Kind: NodeKindBuiltInOp,
 				Pos:  pos,
 				Base: opNode,
-				BuiltInOp: newFnBuiltInOp(attrs, []string{"x._inner", "y._inner"}, func(args map[string]*Node) (*Node, error) {
+				BuiltInOp: newFnBuiltInOp(ctx.Attrs, []string{"x._inner", "y._inner"}, func(args map[string]*Node) (*Node, error) {
 					x := args["x._inner"]
 					y := args["y._inner"]
 					if x.Kind != NodeKindStrLit {
@@ -197,9 +194,9 @@ func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
 					}
 					result := fn(x.StrLit, y.StrLit)
 					if str, ok := result.(string); ok {
-						return StrNode(attrs, pos, str), nil
+						return ctx.StrNode(x.Pos, str), nil
 					}
-					return IntNode(attrs, pos, result.(int64)), nil
+					return ctx.IntNode(x.Pos, result.(int64)), nil
 				}),
 			},
 		})
@@ -211,13 +208,13 @@ func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
 		Pos:  pos,
 	}
 	substr.Defs = NewFlatDefMap(map[Attr]*Node{
-		attrs.Get("x"): &Node{
+		ctx.Attrs.Get("x"): &Node{
 			Kind: NodeKindBackEdge,
 			Pos:  pos,
 			Base: result,
 		},
-		attrs.Get("start"): IntNode(attrs, pos, 0),
-		attrs.Get("end"): &Node{
+		ctx.Attrs.Get("start"): ctx.IntNode(pos, 0),
+		ctx.Attrs.Get("end"): &Node{
 			Kind: NodeKindAccess,
 			Pos:  pos,
 			Base: &Node{
@@ -228,15 +225,15 @@ func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
 					Pos:  pos,
 					Base: substr,
 				},
-				Attr: attrs.Get("x"),
+				Attr: ctx.Attrs.Get("x"),
 			},
-			Attr: attrs.Get("len"),
+			Attr: ctx.Attrs.Get("len"),
 		},
-		attrs.Get("result"): &Node{
+		ctx.Attrs.Get("result"): &Node{
 			Kind: NodeKindBuiltInOp,
 			Pos:  pos,
 			Base: substr,
-			BuiltInOp: newFnBuiltInOp(attrs, []string{"x._inner", "start._inner", "end._inner"}, func(args map[string]*Node) (*Node, error) {
+			BuiltInOp: newFnBuiltInOp(ctx.Attrs, []string{"x._inner", "start._inner", "end._inner"}, func(args map[string]*Node) (*Node, error) {
 				x := args["x._inner"]
 				startNode := args["start._inner"]
 				endNode := args["end._inner"]
@@ -272,39 +269,34 @@ func StrNode(attrs *AttrTable, declPos Pos, lit string) *Node {
 				if start < end {
 					result = str[start:end]
 				}
-				return StrNode(attrs, pos, result), nil
+				return ctx.StrNode(x.Pos, result), nil
 			}),
 		},
 	})
 
 	result.Defs = NewFlatDefMap(map[Attr]*Node{
-		attrs.Get("_inner"): &Node{
-			Kind:   NodeKindStrLit,
-			Pos:    pos,
-			StrLit: lit,
-		},
-		attrs.Get("add"): makeBinaryOp(func(x, y string) any {
+		ctx.Attrs.Get("add"): makeBinaryOp(func(x, y string) any {
 			return x + y
 		}),
-		attrs.Get("eq"): makeBinaryOp(func(x, y string) any {
+		ctx.Attrs.Get("eq"): makeBinaryOp(func(x, y string) any {
 			return boolToInt(x == y)
 		}),
-		attrs.Get("ne"): makeBinaryOp(func(x, y string) any {
+		ctx.Attrs.Get("ne"): makeBinaryOp(func(x, y string) any {
 			return boolToInt(x != y)
 		}),
-		attrs.Get("len"): &Node{
+		ctx.Attrs.Get("len"): &Node{
 			Kind: NodeKindBuiltInOp,
 			Pos:  pos,
 			Base: result,
-			BuiltInOp: newFnBuiltInOp(attrs, []string{"_inner"}, func(args map[string]*Node) (*Node, error) {
+			BuiltInOp: newFnBuiltInOp(ctx.Attrs, []string{"_inner"}, func(args map[string]*Node) (*Node, error) {
 				inner := args["_inner"]
 				if inner.Kind != NodeKindStrLit {
 					return nil, &BuiltInOpError{Msg: "inner argument is not a str value", Pos: inner.Pos}
 				}
-				return IntNode(attrs, pos, int64(len(inner.StrLit))), nil
+				return ctx.IntNode(pos, int64(len(inner.StrLit))), nil
 			}),
 		},
-		attrs.Get("substr"): substr,
+		ctx.Attrs.Get("substr"): substr,
 	})
 	return result
 }
