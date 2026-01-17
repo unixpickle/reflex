@@ -6,7 +6,7 @@ factors = {
 
   result_if_not_divisible = @(f:=f + 1)!
   result_if_divisible = @(x:=input / f, f=2)!
-  is_prime = f * f > input
+  is_prime = f == input
   is_not_divisible = input % f
   result = is_prime
     ? x.str

@@ -107,12 +107,24 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 
 			if node.Eager != nil {
 				newDefs := map[Attr]*Node{}
+
+				// We will never actually use this mapping, since there are no back edges pointed
+				// at nil, but this is crucial to reduce the size of ReplaceMaps.
+				// If the result (newBase) is cloned again in the future, we will now create a
+				// new mapping nil -> newNewBase.
+				// If we iterate N times, we'll always have nil -> newNewNew...Base.
+				// Without this, if the object is repeatedly cloned, then we end up with a mapping
+				// like newBase->newNewBase, newNewBase -> newNewNewBase, etc, with all of these
+				// redundant and unused mappings.
+				var mapping *ReplaceMap[Node]
+				mapping = mapping.Inserting(nil, newBase)
+
 				for k, v := range node.Eager.Map(nil) {
 					result, err := nest(v)
 					if err != nil {
 						return nil, err
 					}
-					newDefs[k] = result.Clone(nil)
+					newDefs[k] = result.Clone(mapping)
 				}
 				if len(newDefs) > 0 {
 					newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))

@@ -122,6 +122,52 @@ factor = {
 result = factor[x=533]!
 ```
 
+## Binary and ternary operators
+
+In the above, simple things seem pretty verbose, such as `f.add(y=1)!` to compute `f + 1`. Luckily, there is some syntactic sugar for these kinds of things, e.g. the `+` operator is a shorthand for calling `add` and passing `y`.
+
+We also use the `select` call on an integer, which returns the value of `true` if the integer is nonzero, or `false` otherwise. The syntactic shortcut for this is ternary syntax, i.e. `cond ? ifTrue : ifFalse`. This is syntactic sugar for `cond.select(true=ifTrue false=ifFalse)!`.
+
+Reworking the above example:
+
+```
+factor = {
+  f = 2
+  next_result = @(f=f + 1)!
+  result = x % f ? next_result : f
+}
+result = factor[x=533]!
+```
+
+## Eager evaluation
+
+When we set a value inside a call or override, we are actually passing a *lazy expression*&mdash;nothing is evaluated right away. This can result in excessive memory usage or redundant computation. For example, consider this code to compute the n-th Fibonacci number:
+
+```
+Fib = {
+  a = 1
+  b = 1
+  next = @(a=b b=a + b)
+
+  after = {
+    result = n ? ^.next.after(n:=n - 1)! : ^
+  }
+}
+
+result = Fib.after[n=5]!.b
+```
+
+This code seems clean, but it actually has exponential runtime. Every time we access `b` on a `Fib` object, we reevaluate the previous `Fib`'s `a` and `b`; every time we access `a`, we will reevaluate the previous `Fib`'s `b`. As a result, computing the n-th Fibonacci number requires computing the previous Fibonacci sequence **twice**, leading to exponential blowup.
+
+When we use call syntax, we have the option to evaluate the passed expression *eagerly* rather than passing it as a lazy expression. We can do this by using `:=` instead of `=`. This can be thought of as a way to cache a result, or to force a computation to happen before the result is needed.
+
+With this simple change, the above code becomes linear time:
+
+```diff
+- next = @(a=b b=a + b)
++ next = @(a:=b b:=a + b)
+```
+
 ## Computing all the factors of a number
 
 This example computes the factors of a number from smallest to largest and concatenates the results.
@@ -131,18 +177,17 @@ factors = {
   input = x # x is passed as an argument
   f = 2 # the current guess for a factor
 
-  result_if_not_divisible = @(f=f.add(y=1)!)!
-  result_if_divisible = @(x=input.div(y=f)! f=2)!
-  is_prime = input.eq(y=f)!
-  is_not_divisible = input.mod(y=f)!
-  result = is_prime.select(
-    true=x.str
-    false=is_not_divisible.select(
-      true=result_if_not_divisible
-      false=f.str.cat(y=" ")!.cat(y=result_if_divisible)!
-    )!
-  )!
+  result_if_not_divisible = @(f:=f + 1)!
+  result_if_divisible = @(x:=input / f, f=2)!
+  is_prime = f == input
+  is_not_divisible = input % f
+  result = is_prime
+    ? x.str
+    : is_not_divisible
+      ? result_if_not_divisible
+      : f.str + " " + result_if_divisible
 }
+
 result = factors(x=246)!
 ```
 
