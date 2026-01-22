@@ -163,7 +163,7 @@ func (p *Parser) parseExpr() (ASTNode, error) {
 }
 
 func (p *Parser) parseBinary(minPrec int) (ASTNode, error) {
-	node, err := p.parsePostfix()
+	node, err := p.parsePrefix()
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (p *Parser) parseBinary(minPrec int) (ASTNode, error) {
 			break
 		}
 		p.k += 1
-		rhs, err := p.parseBinary(minPrec + 1)
+		rhs, err := p.parseBinary(prec + 1)
 		if err != nil {
 			return nil, err
 		}
@@ -202,6 +202,17 @@ func (p *Parser) parseBinary(minPrec int) (ASTNode, error) {
 		}
 	}
 	return node, nil
+}
+
+func (p *Parser) parsePrefix() (ASTNode, error) {
+	if p.match("-") != nil {
+		base, err := p.parsePostfix()
+		if err != nil {
+			return nil, err
+		}
+		return &ASTAccess{Pos: p.peek().Pos, Base: base, Attr: "neg"}, nil
+	}
+	return p.parsePostfix()
 }
 
 func (p *Parser) parsePostfix() (ASTNode, error) {

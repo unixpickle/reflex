@@ -135,7 +135,7 @@ func (t *Tokenizer) nextToken() (*Token, error) {
 		}
 		t.adv(2)
 		return res, nil
-	} else if unicode.IsDigit(ch) || (ch == '-' && unicode.IsDigit(t.peek())) {
+	} else if unicode.IsDigit(ch) {
 		return t.parseIntLit(), nil
 	} else if typ, ok := t.singles[ch]; ok {
 		res := &Token{
@@ -159,7 +159,6 @@ func (t *Tokenizer) nextToken() (*Token, error) {
 	} else if unicode.IsLetter(ch) || ch == '_' {
 		return t.parseIdentifier(), nil
 	}
-	println("is it unicode", unicode.IsLetter(ch))
 	return nil, &LexError{
 		Msg: fmt.Sprintf("Unexpected %q", ch), Pos: t.Pos(),
 	}
@@ -263,7 +262,7 @@ func (t *Tokenizer) parseIntLit() *Token {
 	startPos := t.Pos()
 
 	ch := t.cur()
-	if !(unicode.IsDigit(ch) || (ch == '-' && unicode.IsDigit(t.peek()))) {
+	if !unicode.IsDigit(ch) {
 		panic("parseIntLit called at non-int start")
 	}
 

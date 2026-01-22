@@ -1,6 +1,9 @@
 package reflex
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestInterpreterBasicModule(t *testing.T) {
 	code := `
@@ -105,11 +108,54 @@ func TestInterpreterAncestor(t *testing.T) {
 	testInterpreterOutput[int64](t, code, 3)
 }
 
-type StrOrInt interface {
-	string | int64
+func TestInterpreterBytes(t *testing.T) {
+	code := `
+		result = "hi".bytes + 32.byte + "hey".bytes + ("test".bytes.at(y=1)!.str.bytes)
+	`
+	testInterpreterOutput(t, code, []byte("hi hey101"))
 }
 
-func testInterpreterOutput[T StrOrInt](t *testing.T, code string, expected T) {
+func TestInterpreterLogical(t *testing.T) {
+	code := `
+		result = 3 && 4
+	`
+	testInterpreterOutput[int64](t, code, 4)
+	code = `
+		result = 0 && 4
+	`
+	testInterpreterOutput[int64](t, code, 0)
+	code = `
+		result = 0 || 4
+	`
+	testInterpreterOutput[int64](t, code, 4)
+	code = `
+		result = 3 || 4
+	`
+	testInterpreterOutput[int64](t, code, 3)
+	code = `
+		result = 1 > 1 && 0
+	`
+	testInterpreterOutput[int64](t, code, 0)
+}
+
+func TestInterpreterNegative(t *testing.T) {
+	code := `
+		result = -3
+	`
+	testInterpreterOutput[int64](t, code, -3)
+	code = `
+		a = 1+2
+		result = -a
+	`
+	testInterpreterOutput[int64](t, code, -3)
+	code = `
+		a = 1+2
+		result = -(a+2)
+	`
+	testInterpreterOutput[int64](t, code, -5)
+}
+
+func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	toks, err := Tokenize("file", code)
 	if err != nil {
 		t.Fatalf("failed to tokenize: %s", err)
@@ -145,9 +191,15 @@ func testInterpreterOutput[T StrOrInt](t *testing.T, code string, expected T) {
 		if result.IntLit != intval {
 			t.Fatalf("unexpected output: %d (expected %d)", result.IntLit, x)
 		}
-	} else {
-		if result.StrLit != x.(string) {
+	} else if strval, ok := x.(string); ok {
+		if result.StrLit != strval {
 			t.Fatalf("unexpected output: %s (expected %s)", result.StrLit, x)
 		}
+	} else if bytesval, ok := x.([]byte); ok {
+		if !bytes.Equal(result.BytesLit, bytesval) {
+			t.Fatalf("unexpected output: %s (expected %s)", result.BytesLit, x)
+		}
+	} else {
+		panic("unknown type")
 	}
 }

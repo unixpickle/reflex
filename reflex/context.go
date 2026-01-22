@@ -1,9 +1,10 @@
 package reflex
 
 type Context struct {
-	Attrs    *AttrTable
-	intProto *Node
-	strProto *Node
+	Attrs      *AttrTable
+	intProto   *Node
+	strProto   *Node
+	bytesProto *Node
 }
 
 func NewContext() *Context {
@@ -12,6 +13,7 @@ func NewContext() *Context {
 	// The order matters; strProto creates an int.
 	res.intProto = intNode(res)
 	res.strProto = strNode(res)
+	res.bytesProto = bytesNode(res)
 
 	return res
 }
@@ -40,6 +42,21 @@ func (c *Context) StrNode(pos Pos, lit string) *Node {
 			Kind:   NodeKindStrLit,
 			Pos:    pos,
 			StrLit: lit,
+		},
+	}))
+	clone.Defs = MaybeFlatten(clone.Defs)
+	return clone
+}
+
+// BytesNode creates a byte slice with all of the built-in methods.
+func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
+	clone := c.bytesProto.Clone(nil)
+	clone.Pos = pos
+	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
+		c.Attrs.Get("_inner"): &Node{
+			Kind:     NodeKindBytesLit,
+			Pos:      pos,
+			BytesLit: lit,
 		},
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
