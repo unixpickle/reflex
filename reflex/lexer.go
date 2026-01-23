@@ -136,7 +136,7 @@ func (t *Tokenizer) nextToken() (*Token, error) {
 		t.adv(2)
 		return res, nil
 	} else if unicode.IsDigit(ch) {
-		return t.parseIntLit(), nil
+		return t.parseNumericLiteral(), nil
 	} else if typ, ok := t.singles[ch]; ok {
 		res := &Token{
 			Typ: typ,
@@ -258,23 +258,40 @@ func (t *Tokenizer) parseStringLit() (*Token, error) {
 	return nil, &LexError{Msg: "Unterminated string", Pos: startPos}
 }
 
-func (t *Tokenizer) parseIntLit() *Token {
+func (t *Tokenizer) parseNumericLiteral() *Token {
 	startPos := t.Pos()
 
-	ch := t.cur()
-	if !unicode.IsDigit(ch) {
-		panic("parseIntLit called at non-int start")
+	if !unicode.IsDigit(t.cur()) {
+		panic("parseNumericLiteral called at non-int start")
 	}
 
 	var buf []rune
-	buf = append(buf, ch)
-	t.adv(1)
 
+	// integer part
 	for unicode.IsDigit(t.cur()) {
 		buf = append(buf, t.cur())
 		t.adv(1)
 	}
 
+	// floating point literal: digits '.' digits
+	// require at least one digit after the dot
+	if t.cur() == '.' && unicode.IsDigit(t.peek()) {
+		buf = append(buf, '.') // consume the dot
+		t.adv(1)
+
+		for unicode.IsDigit(t.cur()) {
+			buf = append(buf, t.cur())
+			t.adv(1)
+		}
+
+		return &Token{
+			Typ: "FLOAT",
+			Val: string(buf),
+			Pos: startPos,
+		}
+	}
+
+	// plain integer literal
 	return &Token{
 		Typ: "INT",
 		Val: string(buf),

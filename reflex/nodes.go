@@ -8,6 +8,7 @@ const (
 	NodeKindOverride
 	NodeKindBackEdge
 	NodeKindIntLit
+	NodeKindFloatLit
 	NodeKindStrLit
 	NodeKindBytesLit
 	NodeKindBuiltInOp
@@ -25,6 +26,8 @@ func (n NodeKind) String() string {
 		return "NodeKindBackEdge"
 	case NodeKindIntLit:
 		return "NodeKindIntLit"
+	case NodeKindFloatLit:
+		return "NodeKindFloatLit"
 	case NodeKindStrLit:
 		return "NodeKindStrLit"
 	case NodeKindBytesLit:
@@ -58,6 +61,7 @@ type Node struct {
 	StrLit   string
 	BytesLit []byte
 	IntLit   int64
+	FloatLit float64
 }
 
 // Clone creates a copy of the node and applies the replacement map,
@@ -94,6 +98,8 @@ func (n *Node) Clone(r *ReplaceMap[Node]) *Node {
 		newNode.BytesLit = n.BytesLit
 	case NodeKindIntLit:
 		newNode.IntLit = n.IntLit
+	case NodeKindFloatLit:
+		newNode.FloatLit = n.FloatLit
 	}
 	return newNode
 }

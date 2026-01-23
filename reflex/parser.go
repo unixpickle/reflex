@@ -265,7 +265,7 @@ func (p *Parser) parsePostfix() (ASTNode, error) {
 
 func (p *Parser) parsePrimary() (ASTNode, error) {
 	startPos := p.peek().Pos
-	tok, err := p.expect("{", "INT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT", "(")
+	tok, err := p.expect("{", "INT", "FLOAT", "STRING", "SELF", "PARENT", "ANCESTOR", "IDENT", "(")
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +285,12 @@ func (p *Parser) parsePrimary() (ASTNode, error) {
 			return nil, &ParseError{Msg: err.Error(), Pos: startPos}
 		}
 		return &ASTIntLit{Pos: startPos, Value: value}, nil
+	case "FLOAT":
+		value, err := strconv.ParseFloat(tok.Val, 64)
+		if err != nil {
+			return nil, &ParseError{Msg: err.Error(), Pos: startPos}
+		}
+		return &ASTFloatLit{Pos: startPos, Value: value}, nil
 	case "STRING":
 		return &ASTStrLit{Pos: startPos, Value: tok.Val}, nil
 	case "SELF":

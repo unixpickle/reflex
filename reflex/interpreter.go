@@ -157,7 +157,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 					return nil, &InterpreterError{Inner: err, Trace: trace}
 				}
 			}
-		case NodeKindIntLit, NodeKindStrLit, NodeKindBytesLit, NodeKindBlock:
+		case NodeKindIntLit, NodeKindFloatLit, NodeKindStrLit, NodeKindBytesLit, NodeKindBlock:
 			return node, nil
 		default:
 			panic("unknown node type")

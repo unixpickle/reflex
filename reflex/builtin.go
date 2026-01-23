@@ -3,6 +3,7 @@ package reflex
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -24,7 +25,7 @@ func boolToInt(b bool) int64 {
 }
 
 type literal interface {
-	int64 | string | []byte
+	int64 | float64 | string | []byte
 }
 
 func literalValue[T literal](x *Node) (T, error) {
@@ -35,6 +36,11 @@ func literalValue[T literal](x *Node) (T, error) {
 			return zero, &BuiltInOpError{Msg: "value is not an int", Pos: x.Pos}
 		}
 		return any(x.IntLit).(T), nil
+	case float64:
+		if x.Kind != NodeKindFloatLit {
+			return zero, &BuiltInOpError{Msg: "value is not a float", Pos: x.Pos}
+		}
+		return any(x.FloatLit).(T), nil
 	case string:
 		if x.Kind != NodeKindStrLit {
 			return zero, &BuiltInOpError{Msg: "value is not a string", Pos: x.Pos}
@@ -54,6 +60,8 @@ func literalNode[T literal](ctx *Context, pos Pos, x T) *Node {
 	switch x := any(x).(type) {
 	case int64:
 		return ctx.IntNode(pos, x)
+	case float64:
+		return ctx.FloatNode(pos, x)
 	case string:
 		return ctx.StrNode(pos, x)
 	case []byte:
@@ -216,10 +224,80 @@ func intNode(ctx *Context) *Node {
 		ctx.Attrs.Get("neg"): makeUnaryOp(ctx, pos, result, func(x int64) int64 {
 			return -x
 		}),
+		ctx.Attrs.Get("float"): makeUnaryOp(ctx, pos, result, func(x int64) float64 {
+			return float64(x)
+		}),
 		ctx.Attrs.Get("select"):      makeSelectOrLogic("cond", newBuiltInSelect(ctx.Attrs)),
 		ctx.Attrs.Get("logical_and"): makeSelectOrLogic("x", newBuiltInLogic(ctx.Attrs, true)),
 		ctx.Attrs.Get("logical_or"):  makeSelectOrLogic("x", newBuiltInLogic(ctx.Attrs, false)),
 	})
+	return result
+}
+
+func floatNode(ctx *Context) *Node {
+	pos := Pos{File: "<builtin/float>", Line: 0, Col: 0}
+
+	result := &Node{
+		Kind: NodeKindBlock,
+		Pos:  pos,
+	}
+
+	result.Defs = NewFlatDefMap(map[Attr]*Node{
+		ctx.Attrs.Get("add"): makeBinaryOp(ctx, pos, result, func(x, y float64) float64 {
+			return x + y
+		}),
+		ctx.Attrs.Get("sub"): makeBinaryOp(ctx, pos, result, func(x, y float64) float64 {
+			return x - y
+		}),
+		ctx.Attrs.Get("div"): makeBinaryOp(ctx, pos, result, func(x, y float64) float64 {
+			return x / y
+		}),
+		ctx.Attrs.Get("mul"): makeBinaryOp(ctx, pos, result, func(x, y float64) float64 {
+			return x * y
+		}),
+		// optional: float mod, similar sign behavior to int mod above
+		ctx.Attrs.Get("mod"): makeBinaryOp(ctx, pos, result, func(x, y float64) float64 {
+			r := math.Mod(x, y)
+			if r < 0 {
+				if y < 0 {
+					r -= y
+				} else {
+					r += y
+				}
+			}
+			return r
+		}),
+
+		ctx.Attrs.Get("lt"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x < y)
+		}),
+		ctx.Attrs.Get("gt"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x > y)
+		}),
+		ctx.Attrs.Get("le"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x <= y)
+		}),
+		ctx.Attrs.Get("ge"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x >= y)
+		}),
+		ctx.Attrs.Get("eq"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x == y)
+		}),
+		ctx.Attrs.Get("ne"): makeBinaryOp(ctx, pos, result, func(x, y float64) int64 {
+			return boolToInt(x != y)
+		}),
+
+		ctx.Attrs.Get("neg"): makeUnaryOp(ctx, pos, result, func(x float64) float64 {
+			return -x
+		}),
+		ctx.Attrs.Get("str"): makeUnaryOp(ctx, pos, result, func(x float64) string {
+			return strconv.FormatFloat(x, 'f', -1, 64)
+		}),
+		ctx.Attrs.Get("int"): makeUnaryOp(ctx, pos, result, func(x float64) int64 {
+			return int64(x)
+		}),
+	})
+
 	return result
 }
 

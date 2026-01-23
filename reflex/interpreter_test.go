@@ -155,6 +155,21 @@ func TestInterpreterNegative(t *testing.T) {
 	testInterpreterOutput[int64](t, code, -5)
 }
 
+func TestInterpreterFloat(t *testing.T) {
+	code := `
+		result = -3.0 + 5.0
+	`
+	testInterpreterOutput[float64](t, code, 2.0)
+	code = `
+		result = -3.float + 5.0
+	`
+	testInterpreterOutput[float64](t, code, 2.0)
+	code = `
+		result = (-3.float + 5.5).int
+	`
+	testInterpreterOutput[int64](t, code, 2)
+}
+
 func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	toks, err := Tokenize("file", code)
 	if err != nil {
@@ -197,7 +212,11 @@ func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 		}
 	} else if bytesval, ok := x.([]byte); ok {
 		if !bytes.Equal(result.BytesLit, bytesval) {
-			t.Fatalf("unexpected output: %s (expected %s)", result.BytesLit, x)
+			t.Fatalf("unexpected output: %#v (expected %#v)", result.BytesLit, x)
+		}
+	} else if fval, ok := x.(float64); ok {
+		if result.FloatLit != fval {
+			t.Fatalf("unexpected output: %f (expected %f)", result.FloatLit, x)
 		}
 	} else {
 		panic("unknown type")

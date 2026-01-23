@@ -209,6 +209,15 @@ func (a *ASTIntLit) Node(ctx *Context, parents []*Node) (*Node, error) {
 	return ctx.IntNode(a.Pos, a.Value), nil
 }
 
+type ASTFloatLit struct {
+	Pos   Pos
+	Value float64
+}
+
+func (a *ASTFloatLit) Node(ctx *Context, parents []*Node) (*Node, error) {
+	return ctx.FloatNode(a.Pos, a.Value), nil
+}
+
 type ASTStrLit struct {
 	Pos   Pos
 	Value string
