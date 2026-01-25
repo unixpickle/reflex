@@ -424,6 +424,38 @@ func strNode(ctx *Context) *Node {
 		Pos:  pos,
 	}
 	substr := createSubstrOrSlice(ctx, pos, result, true)
+
+	importNode := &Node{
+		Kind: NodeKindBlock,
+		Pos:  pos,
+	}
+	importNode.Defs = NewFlatDefMap(map[Attr]*Node{
+		ctx.Attrs.Get("x"): &Node{
+			Kind: NodeKindBackEdge,
+			Pos:  pos,
+			Base: result,
+		},
+		ctx.Attrs.Get("result"): &Node{
+			Kind: NodeKindBuiltInOp,
+			Pos:  pos,
+			Base: importNode,
+			BuiltInOp: newFnBuiltInOp(
+				ctx.Attrs,
+				[]string{"x._inner"},
+				func(args map[string]*Node) (*Node, error) {
+					x := args["x._inner"]
+					if x.Kind != NodeKindStrLit {
+						return nil, &BuiltInOpError{
+							Msg: "x argument is not a str value",
+							Pos: x.Pos,
+						}
+					}
+					return ctx.Import(x.Pos, x.StrLit)
+				},
+			),
+		},
+	})
+
 	result.Defs = NewFlatDefMap(map[Attr]*Node{
 		ctx.Attrs.Get("add"): makeBinaryOp(ctx, pos, result, func(x, y string) string {
 			return x + y
@@ -441,6 +473,7 @@ func strNode(ctx *Context) *Node {
 			return []byte(x)
 		}),
 		ctx.Attrs.Get("substr"): substr,
+		ctx.Attrs.Get("import"): importNode,
 	})
 	return result
 }

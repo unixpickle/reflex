@@ -1,11 +1,20 @@
 package reflex
 
+import (
+	"fmt"
+	"path/filepath"
+)
+
 type Context struct {
-	Attrs      *AttrTable
-	intProto   *Node
-	floatProto *Node
-	strProto   *Node
-	bytesProto *Node
+	Attrs       *AttrTable
+	intProto    *Node
+	floatProto  *Node
+	strProto    *Node
+	bytesProto  *Node
+	maybeModule *Node
+	ioModule    *Node
+
+	cachedImports map[string]*Node
 }
 
 func NewContext() *Context {
@@ -16,6 +25,8 @@ func NewContext() *Context {
 	res.floatProto = floatNode(res)
 	res.strProto = strNode(res)
 	res.bytesProto = bytesNode(res)
+	res.maybeModule = createMaybe(res)
+	res.ioModule = createIO(res)
 
 	return res
 }
@@ -78,6 +89,81 @@ func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
 	return clone
+}
+
+func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
+	clone, ok := c.maybeModule.Defs.Get(c.Attrs.Get("maybe"))
+	if !ok {
+		panic("maybe module does not have attribute 'maybe'")
+	}
+	clone = clone.Clone(nil)
+	clone.Pos = pos
+	m := map[Attr]*Node{
+		c.Attrs.Get("success"): c.IntNode(pos, boolToInt(err == nil)),
+	}
+	if err != nil {
+		m[c.Attrs.Get("error")] = c.StrNode(pos, err.Error())
+	}
+	if result != nil {
+		m[c.Attrs.Get("result")] = result.Clone(nil)
+	} else if err == nil {
+		// Always return some block, even if it's empty.
+		m[c.Attrs.Get("result")] = &Node{
+			Kind: NodeKindBlock,
+			Pos:  pos,
+			Defs: NewFlatDefMap(nil),
+		}
+	}
+	clone.Defs = MaybeFlatten(NewOverrideDefMap(clone.Defs, NewFlatDefMap(m)))
+	return clone
+}
+
+func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
+	switch relPath {
+	case "stdlib/io":
+		return &Node{
+			Kind: NodeKindBackEdge,
+			Pos:  pos,
+			Base: c.ioModule,
+		}, nil
+	case "stdlib/maybe":
+		return &Node{
+			Kind: NodeKindBackEdge,
+			Pos:  pos,
+			Base: c.maybeModule,
+		}, nil
+	default:
+		rp, err := filepath.Rel(pos.File, relPath)
+		if err == nil {
+			return nil, err
+		}
+		absPath, err := filepath.Abs(rp)
+		if err == nil {
+			return nil, err
+		}
+		if node, ok := c.cachedImports[absPath]; ok {
+			return node, nil
+		}
+		toks, err := Tokenize(absPath, ioCode)
+		if err != nil {
+			return nil, fmt.Errorf("failed to tokenize %#v: %w", absPath, err)
+		}
+		ast, err := Parse(toks)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %#v: %w", absPath, err)
+		}
+		node, err := ast.Node(c, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %#v: %w", absPath, err)
+		}
+		node = &Node{
+			Kind: NodeKindBackEdge,
+			Pos:  pos,
+			Base: node,
+		}
+		c.cachedImports[absPath] = node
+		return node, nil
+	}
 }
 
 type Attr int

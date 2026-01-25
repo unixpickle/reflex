@@ -1,0 +1,7 @@
+print = {
+    # User can pass str or line
+    str = line + "\n"
+
+    file = ^.stdout
+    result = file.write(bytes := str.bytes)!
+}

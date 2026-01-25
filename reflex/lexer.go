@@ -231,12 +231,9 @@ func (t *Tokenizer) parseStringLit() (*Token, error) {
 				buf = append(buf, c)
 			}
 			escape = false
-		}
-
-		if c == '\\' {
+		} else if c == '\\' {
 			escape = true
-		}
-		if c == quote {
+		} else if c == quote {
 			// go past closing quote
 			t.adv(1)
 			return &Token{
@@ -244,8 +241,7 @@ func (t *Tokenizer) parseStringLit() (*Token, error) {
 				Val: string(buf),
 				Pos: startPos,
 			}, nil
-		}
-		if c == '\n' {
+		} else if c == '\n' {
 			return nil, &LexError{
 				Msg: "Unterminated string",
 				Pos: startPos,

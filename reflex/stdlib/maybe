@@ -1,0 +1,8 @@
+maybe = {
+    success = 0
+
+    logical_and = {
+        x = ^
+        result = ^.success ? y : x
+    }
+}

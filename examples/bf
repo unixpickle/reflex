@@ -2,6 +2,8 @@
 # Brainf*ck interpreter #
 #########################
 
+io = "stdlib/io".import!
+
 # A stack which is prefilled with infinite zeroes.
 Stack = {
   prefix = ^.Stack # infinite prefix of all 0's
@@ -94,12 +96,12 @@ Program = {
 }
 
 # A code interpreter, which represents the current program state.
-# Use the 'result' definition to get the terminated interpreter state,
-# which will have accumulated output in the 'output' definition.
+# Use the 'result' definition to get the terminated interpreter state.
 Interpreter = {
+  success = 1 # mark the program as successful
+
   program = ^^.Program[code=^.code]
   tape = ^^.Tape
-  output = ""
 
   is_open_bracket = program.cur_inst == "["
   is_close_bracket = program.cur_inst == "]"
@@ -116,7 +118,7 @@ Interpreter = {
   run_gt = step(tape:=tape.move_right)!
   run_minus = step(tape:=tape.decrement)!
   run_plus = step(tape:=tape.increment)!
-  run_dot = step(output:=output + tape.cur.chr)!
+  run_dot = ^^.io.stdout.write(bytes=tape.cur.chr.bytes)! && step!
   run_open_bracket = @(
     program := tape.cur ? program.advanced :  program.match_open
   )!
@@ -145,7 +147,7 @@ unit_test = {
 }
 
 # Classic hello world
-result = Interpreter[code=">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+."]!.output
+result = Interpreter[code=">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+."]!
 
 # Below example prints 2*2 = "\x04"
-# result = Interpreter[code="++[->++<]>."]!.output
+# result = Interpreter[code="++[->++<]>."]!
