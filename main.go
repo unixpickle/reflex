@@ -43,7 +43,7 @@ func main() {
 		Base: node,
 		Attr: ctx.Attrs.Get("result"),
 	}
-	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack())
+	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack(), nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to evaluate:", err)
 		os.Exit(1)

@@ -36,6 +36,7 @@ func createIO(ctx *Context) *Node {
 	node.Defs = NewOverrideDefMap(node.Defs, NewFlatDefMap(map[Attr]*Node{
 		ctx.Attrs.Get("stdout"): createFile(ctx, os.Stdout),
 		ctx.Attrs.Get("stdin"):  createFile(ctx, os.Stdin),
+		ctx.Attrs.Get("stderr"):  createFile(ctx, os.Stderr),
 	}))
 	return node
 }

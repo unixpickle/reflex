@@ -197,7 +197,7 @@ func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	}
 	var gs GapStack
 	gs.Push(Pos{File: "test"})
-	result, err := Evaluate(ctx, access, gs)
+	result, err := Evaluate(ctx, access, gs, nil)
 	if err != nil {
 		t.Fatalf("failed to evaluate: %s", err)
 	}

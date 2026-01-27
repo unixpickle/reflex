@@ -39,14 +39,32 @@ func formatAvailable(attrs *AttrTable, node *Node) string {
 }
 
 // Evaluate an expression until it becomes a literal or a block.
-func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
+func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*Node, error) {
+	if gc == nil {
+		gc = NewGarbageCollector()
+		defer gc.Shutdown()
+	}
 	for {
+		gc.MaybeCollect()
 		pos := node.Pos
 		newTrace := trace
 		newTrace.Push(pos)
 
-		nest := func(newNode *Node) (*Node, error) {
-			return Evaluate(ctx, newNode, newTrace)
+		nest := func(newNode *Node, active ...*Node) (*Node, error) {
+			for _, x := range active {
+				gc.Retain(x)
+			}
+			gc.Retain(newNode)
+			gc.MaybeCollect()
+			res, err := Evaluate(ctx, newNode, newTrace, gc)
+			gc.Retain(res)
+			gc.MaybeCollect()
+			gc.Release(res)
+			gc.Release(newNode)
+			for _, x := range active {
+				gc.Release(x)
+			}
+			return res, err
 		}
 		doNext := func(newNode *Node) {
 			node = newNode
@@ -58,7 +76,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 			b := node.Base
 			a := node.Attr
 			node = nil
-			base, err := Evaluate(ctx, b, newTrace)
+			base, err := Evaluate(ctx, b, newTrace, gc)
 			if err != nil {
 				return nil, err
 			}
@@ -78,7 +96,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 			}
 			doNext(obj)
 		case NodeKindOverride:
-			base, err := nest(node.Base)
+			base, err := nest(node.Base, node)
 			if err != nil {
 				return nil, err
 			}
@@ -106,8 +124,6 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 			}
 
 			if node.Eager != nil {
-				newDefs := map[Attr]*Node{}
-
 				// We will never actually use this mapping, since there are no back edges pointed
 				// at nil, but this is crucial to reduce the size of ReplaceMaps.
 				// If the result (newBase) is cloned again in the future, we will now create a
@@ -119,12 +135,18 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 				var mapping *ReplaceMap[Node]
 				mapping = mapping.Inserting(nil, newBase)
 
+				newDefs := map[Attr]*Node{}
 				for k, v := range node.Eager.Map(nil) {
-					result, err := nest(v)
+					result, err := nest(v, node, newBase)
 					if err != nil {
 						return nil, err
 					}
-					newDefs[k] = result.Clone(mapping)
+					resNode := result.Clone(mapping)
+					newDefs[k] = resNode
+					gc.Retain(resNode)
+				}
+				for _, v := range newDefs {
+					gc.Release(v)
 				}
 				if len(newDefs) > 0 {
 					newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))
@@ -148,7 +170,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack) (*Node, error) {
 					doNext(result)
 					break
 				}
-				nextResult, err := nest(nextExpr)
+				nextResult, err := nest(nextExpr, node)
 				if err != nil {
 					return nil, err
 				}

@@ -62,6 +62,8 @@ type Node struct {
 	BytesLit []byte
 	IntLit   int64
 	FloatLit float64
+
+	DidFlatten bool
 }
 
 // Clone creates a copy of the node and applies the replacement map,
@@ -102,6 +104,29 @@ func (n *Node) Clone(r *ReplaceMap[Node]) *Node {
 		newNode.FloatLit = n.FloatLit
 	}
 	return newNode
+}
+
+// Flatten performs all nested clones to avoid dead references.
+//
+// This is slow but can reduce memory usage.
+func (n *Node) Flatten() {
+	if n.DidFlatten {
+		return
+	}
+	n.DidFlatten = true
+	for _, mPtr := range []*DefMap{&n.Defs, &n.Eager} {
+		if *mPtr == nil {
+			continue
+		}
+		newMap := (*mPtr).Map(nil)
+		for _, newN := range newMap {
+			newN.Flatten()
+		}
+		*mPtr = NewFlatDefMap(newMap)
+	}
+	if n.Base != nil {
+		n.Base.Flatten()
+	}
 }
 
 // Defines checks if an attribute is defined in the node.
