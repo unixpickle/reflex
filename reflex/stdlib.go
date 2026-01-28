@@ -11,6 +11,9 @@ var ioCode string
 //go:embed stdlib/maybe
 var maybeCode string
 
+//go:embed stdlib/collections
+var collectionsCode string
+
 func createStdNode(ctx *Context, name, code string) *Node {
 	toks, err := Tokenize("<stdlib/"+name+">", code)
 	if err != nil {
@@ -31,12 +34,16 @@ func createMaybe(ctx *Context) *Node {
 	return createStdNode(ctx, "maybe", maybeCode)
 }
 
+func createCollections(ctx *Context) *Node {
+	return createStdNode(ctx, "collections", collectionsCode)
+}
+
 func createIO(ctx *Context) *Node {
 	node := createStdNode(ctx, "io", ioCode)
 	node.Defs = NewOverrideDefMap(node.Defs, NewFlatDefMap(map[Attr]*Node{
 		ctx.Attrs.Get("stdout"): createFile(ctx, os.Stdout),
 		ctx.Attrs.Get("stdin"):  createFile(ctx, os.Stdin),
-		ctx.Attrs.Get("stderr"):  createFile(ctx, os.Stderr),
+		ctx.Attrs.Get("stderr"): createFile(ctx, os.Stderr),
 	}))
 	return node
 }

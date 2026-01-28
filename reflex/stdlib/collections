@@ -1,0 +1,72 @@
+# A fixed-len list that is filled with some default value.
+#
+# Lists are created with an initial length and value.
+# For example, to create a list of 10 elements that is full of the
+# empty string, you can do:
+#
+#     list = List(len=10 value="")
+#
+# Lists can be randomly accessed or modified.
+# For example, you can get a value:
+#
+#     item = list.at(idx=3)
+#
+# And set a value:
+#
+#     new_list = list.set(idx=3 value="hi")!`
+#
+List = {
+  len = 0
+  value = 0
+  left = @(len:=_left_len)
+  right = @(len:=_right_len)
+
+  at = {
+    result = idx < 0 || idx >= ^.len
+      ? "index out of range".panic
+      : ^.len == 1
+        ? ^.value 
+        : idx < ^._left_len
+          ? ^.left.at(idx=idx)!
+          : ^.right.at(idx=idx - ^._left_len)!
+  }
+
+  set = {
+    result = idx < 0 || idx >= ^.len
+      ? ("index " + idx.str + " is out of range").panic
+      : ^.len == 1
+        ? ^(value:=value)
+        : idx < ^._left_len
+          ? ^(
+              left := ^.left.set(idx=idx, value=value)!
+              right := ^.right
+            )
+          : ^(
+              right := ^.right.set(idx = idx - ^._left_len, value = value)!
+              left := ^.left
+            )
+  }
+
+  map = {
+    result = ^.len == 0
+      ? ^
+      : ^.len == 1
+        ? ^(value:=fn(x=^.value)!)
+        : ^(
+            left := ^.left.map(fn=fn)!
+            right := ^.right.map(fn=fn)!
+          )
+  }
+
+  sum = {
+    zero = 0
+    result = ^.len == 0
+      ? zero
+      : ^.len == 1
+        ? ^.value
+        : ^.left.sum(zero=zero)! + ^.right.sum(zero=zero)!
+  }
+
+  _left_len = len / 2
+  _right_len = _left_len + len % 2
+}

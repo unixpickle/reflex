@@ -3,16 +3,16 @@ package reflex
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type Context struct {
-	Attrs       *AttrTable
-	intProto    *Node
-	floatProto  *Node
-	strProto    *Node
-	bytesProto  *Node
-	maybeModule *Node
-	ioModule    *Node
+	Attrs      *AttrTable
+	intProto   *Node
+	floatProto *Node
+	strProto   *Node
+	bytesProto *Node
+	builtIns   map[string]*Node
 
 	cachedImports map[string]*Node
 }
@@ -25,8 +25,12 @@ func NewContext() *Context {
 	res.floatProto = floatNode(res)
 	res.strProto = strNode(res)
 	res.bytesProto = bytesNode(res)
-	res.maybeModule = createMaybe(res)
-	res.ioModule = createIO(res)
+
+	res.builtIns = map[string]*Node{
+		"maybe":       createMaybe(res),
+		"io":          createIO(res),
+		"collections": createCollections(res),
+	}
 
 	return res
 }
@@ -92,7 +96,7 @@ func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
 }
 
 func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
-	clone, ok := c.maybeModule.Defs.Get(c.Attrs.Get("maybe"))
+	clone, ok := c.builtIns["maybe"].Defs.Get(c.Attrs.Get("maybe"))
 	if !ok {
 		panic("maybe module does not have attribute 'maybe'")
 	}
@@ -120,17 +124,12 @@ func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
 
 func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 	switch relPath {
-	case "stdlib/io":
+	case "stdlib/io", "stdio/collections", "stdio/maybe":
+		name := strings.Split(relPath, "/")[1]
 		return &Node{
 			Kind: NodeKindBackEdge,
 			Pos:  pos,
-			Base: c.ioModule,
-		}, nil
-	case "stdlib/maybe":
-		return &Node{
-			Kind: NodeKindBackEdge,
-			Pos:  pos,
-			Base: c.maybeModule,
+			Base: c.builtIns[name],
 		}, nil
 	default:
 		rp, err := filepath.Rel(pos.File, relPath)

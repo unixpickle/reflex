@@ -71,7 +71,7 @@ func literalNode[T literal](ctx *Context, pos Pos, x T) *Node {
 	}
 }
 
-func makeUnaryOp[T, R literal](ctx *Context, pos Pos, parent *Node, fn func(T) R) *Node {
+func makeFallibleUnaryOp[T, R literal](ctx *Context, pos Pos, parent *Node, fn func(T) (R, error)) *Node {
 	return &Node{
 		Kind: NodeKindBuiltInOp,
 		Pos:  pos,
@@ -85,11 +85,20 @@ func makeUnaryOp[T, R literal](ctx *Context, pos Pos, parent *Node, fn func(T) R
 				if err != nil {
 					return nil, err
 				}
-				result := fn(argValue)
-				return literalNode(ctx, x.Pos, result), nil
+				if result, err := fn(argValue); err != nil {
+					return nil, err
+				} else {
+					return literalNode(ctx, x.Pos, result), nil
+				}
 			},
 		),
 	}
+}
+
+func makeUnaryOp[T, R literal](ctx *Context, pos Pos, parent *Node, fn func(T) R) *Node {
+	return makeFallibleUnaryOp(ctx, pos, parent, func(x T) (R, error) {
+		return fn(x), nil
+	})
 }
 
 func makeFallibleBinaryOp[T1, T2, R literal](ctx *Context, pos Pos, parent *Node, fn func(T1, T2) (R, error)) *Node {
@@ -474,6 +483,23 @@ func strNode(ctx *Context) *Node {
 		}),
 		ctx.Attrs.Get("substr"): substr,
 		ctx.Attrs.Get("import"): importNode,
+		ctx.Attrs.Get("panic"): &Node{
+			Kind: NodeKindBuiltInOp,
+			Pos:  pos,
+			Base: result,
+			BuiltInOp: newFnBuiltInOp(
+				ctx.Attrs,
+				[]string{"_inner"},
+				func(args map[string]*Node) (*Node, error) {
+					x := args["_inner"]
+					argValue, err := literalValue[string](x)
+					if err != nil {
+						return nil, err
+					}
+					return nil, &BuiltInOpError{Msg: argValue, Pos: x.Pos}
+				},
+			),
+		},
 	})
 	return result
 }

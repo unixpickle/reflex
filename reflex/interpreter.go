@@ -81,7 +81,10 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 				return nil, err
 			}
 			if base.Kind != NodeKindBlock {
-				return nil, &InterpreterError{Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind), Trace: trace}
+				return nil, &InterpreterError{
+					Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind),
+					Trace: newTrace,
+				}
 			}
 			obj, ok := base.Defs.Get(a)
 			if !ok {
@@ -91,7 +94,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 						ctx.Attrs.Name(a),
 						formatAvailable(ctx.Attrs, base),
 					),
-					Trace: trace,
+					Trace: newTrace,
 				}
 			}
 			doNext(obj)
@@ -116,7 +119,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 								ctx.Attrs.Name(src),
 								ctx.Attrs.Name(dst),
 							),
-							Trace: trace,
+							Trace: newTrace,
 						}
 					}
 				}
@@ -176,7 +179,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 				}
 				op, err = op.Tell(node.Base, nextResult)
 				if err != nil {
-					return nil, &InterpreterError{Inner: err, Trace: trace}
+					return nil, &InterpreterError{Inner: err, Trace: newTrace}
 				}
 			}
 		case NodeKindIntLit, NodeKindFloatLit, NodeKindStrLit, NodeKindBytesLit, NodeKindBlock:
