@@ -1,7 +1,22 @@
-print = {
-    # User can pass str or line
-    str = line + "\n"
+maybe = "stdlib/maybe".import!
 
-    file = ^.stdout
-    result = file.write(bytes := str.bytes)!
+print = {
+  # User can pass str or line
+  str = line + "\n"
+
+  file = ^.stdout
+  result = file.write(bytes := str.bytes)!
 }
+
+readline = {
+  trim = 1
+  file = ^.stdin
+
+  result_bytes = @(next_byte:=file.read(n=1)!).with_next_byte
+  with_next_byte = next_byte
+    && (next_byte!.at(y=0)! == newline
+        ? ^^.maybe.ok(x=trim ? "".bytes : next_byte!)!
+        : result_bytes.map(fn={result=^.next_byte! + x})!)
+
+  result = result_bytes.map(fn={result = x.str})!
+}(newline:="\n".bytes.at(y=0)!)

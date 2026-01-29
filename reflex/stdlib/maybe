@@ -1,8 +1,24 @@
 maybe = {
-    success = 0
+  success = 0
 
-    logical_and = {
-        x = ^
-        result = ^.success ? y : x
-    }
+  logical_and = {
+    x = ^
+    result = ^.success ? y : x
+  }
+
+  map = {
+    result = ^ && ^(result:=fn(x:=^!)!)
+  }
+
+  then = {
+    result = ^ && fn(x:=^!)!
+  }
+}
+
+must = {
+  result = cond ? ^^.maybe(success:=1) : ^^.maybe(error:=error)
+}
+
+ok = {
+  result = ^^.maybe(success:=1, result:=x)
 }

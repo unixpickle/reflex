@@ -2,6 +2,7 @@ package reflex
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -31,6 +32,7 @@ func NewContext() *Context {
 		"io":          createIO(res),
 		"collections": createCollections(res),
 	}
+	res.cachedImports = map[string]*Node{}
 
 	return res
 }
@@ -124,7 +126,7 @@ func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
 
 func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 	switch relPath {
-	case "stdlib/io", "stdio/collections", "stdio/maybe":
+	case "stdlib/io", "stdlib/collections", "stdlib/maybe":
 		name := strings.Split(relPath, "/")[1]
 		return &Node{
 			Kind: NodeKindBackEdge,
@@ -133,17 +135,21 @@ func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 		}, nil
 	default:
 		rp, err := filepath.Rel(pos.File, relPath)
-		if err == nil {
+		if err != nil {
 			return nil, err
 		}
 		absPath, err := filepath.Abs(rp)
-		if err == nil {
+		if err != nil {
 			return nil, err
 		}
 		if node, ok := c.cachedImports[absPath]; ok {
 			return node, nil
 		}
-		toks, err := Tokenize(absPath, ioCode)
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return nil, err
+		}
+		toks, err := Tokenize(absPath, string(data))
 		if err != nil {
 			return nil, fmt.Errorf("failed to tokenize %#v: %w", absPath, err)
 		}

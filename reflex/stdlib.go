@@ -114,7 +114,7 @@ func createFile(ctx *Context, f *os.File) *Node {
 				ctx.Attrs,
 				[]string{"n._inner"},
 				func(args map[string]*Node) (*Node, error) {
-					nNode := args["bytes._inner"]
+					nNode := args["n._inner"]
 					n, err := literalValue[int64](nNode)
 					if err != nil {
 						return nil, err

@@ -26,9 +26,9 @@ List = {
       ? "index out of range".panic
       : ^.len == 1
         ? ^.value 
-        : idx < ^._left_len
-          ? ^.left.at(idx=idx)!
-          : ^.right.at(idx=idx - ^._left_len)!
+        : idx < ^.left.len
+          ? ^.left.at(idx := idx)!
+          : ^.right.at(idx := idx - ^.left.len)!
   }
 
   set = {
@@ -36,13 +36,13 @@ List = {
       ? ("index " + idx.str + " is out of range").panic
       : ^.len == 1
         ? ^(value:=value)
-        : idx < ^._left_len
+        : idx < ^.left.len
           ? ^(
-              left := ^.left.set(idx=idx, value=value)!
+              left := ^.left.set(idx:=idx, value:=value)!
               right := ^.right
             )
           : ^(
-              right := ^.right.set(idx = idx - ^._left_len, value = value)!
+              right := ^.right.set(idx := idx - ^.left.len, value := value)!
               left := ^.left
             )
   }
@@ -51,10 +51,10 @@ List = {
     result = ^.len == 0
       ? ^
       : ^.len == 1
-        ? ^(value:=fn(x=^.value)!)
+        ? ^(value:=fn(x:=^.value)!)
         : ^(
-            left := ^.left.map(fn=fn)!
-            right := ^.right.map(fn=fn)!
+            left := ^.left.map(fn:=fn)!
+            right := ^.right.map(fn:=fn)!
           )
   }
 
@@ -64,7 +64,25 @@ List = {
       ? zero
       : ^.len == 1
         ? ^.value
-        : ^.left.sum(zero=zero)! + ^.right.sum(zero=zero)!
+        : ^.left.sum(zero:=zero)! + ^.right.sum(zero:=zero)!
+  }
+
+  set_range = {
+    src_offset = 0
+    result = src_offset + ^.len <= 0 || src_offset >= arr.len
+      ? ^
+      : ^.len != 1
+        ? ^(
+            left:=^.left.set_range(src_offset:=src_offset, arr:=arr)!
+            right:=^.right.set_range(src_offset:=src_offset + ^.left.len, arr:=arr)!
+          )
+        : ^(value:=arr.at(idx:=src_offset)!)
+  }
+
+  add = {
+    x = ^
+    _result = ^^.List(len=x.len + y.len).set_range(src_offset=0 arr=x)!.set_range(src_offset=-x.len, arr:=y)!
+    result = @(y:=y)._result
   }
 
   _left_len = len / 2

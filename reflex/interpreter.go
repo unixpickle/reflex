@@ -40,6 +40,9 @@ func formatAvailable(attrs *AttrTable, node *Node) string {
 
 // Evaluate an expression until it becomes a literal or a block.
 func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*Node, error) {
+	if node == nil {
+		panic("nil node")
+	}
 	if gc == nil {
 		gc = NewGarbageCollector()
 		defer gc.Shutdown()
@@ -67,6 +70,9 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			return res, err
 		}
 		doNext := func(newNode *Node) {
+			if newNode == nil {
+				panic("nil node")
+			}
 			node = newNode
 			trace = newTrace
 		}
