@@ -48,13 +48,14 @@ List = {
   }
 
   map = {
+    _offset = 0
     result = ^.len == 0
       ? ^
       : ^.len == 1
-        ? ^(value:=fn(x:=^.value)!)
+        ? ^(value:=fn(x:=^.value, idx:=_offset)!)
         : ^(
-            left := ^.left.map(fn:=fn)!
-            right := ^.right.map(fn:=fn)!
+            left := ^.left.map(fn:=fn, _offset:=_offset)!
+            right := ^.right.map(fn:=fn, _offset:=_offset+^.left.len)!
           )
   }
 
@@ -83,6 +84,45 @@ List = {
     x = ^
     _result = ^^.List(len=x.len + y.len).set_range(src_offset=0 arr=x)!.set_range(src_offset=-x.len, arr:=y)!
     result = @(y:=y)._result
+  }
+
+  range = { # args: (start, end, stride)
+    start = 0
+    end = 0
+    stride = 1
+
+    len = stride > 0
+      ? start < end
+        ? (end - start - 1) / stride + 1
+        : 0
+      : stride < 0
+        ? start > end
+          ? (start - end - 1) / -stride + 1
+          : 0
+        : 0
+
+    _result = ^^.List(len:=len).map(fn={
+        result = ^.start + idx * ^.stride
+    })!
+
+    result = @(start:=start end:=end stride:=stride len:=len)._result
+  }
+
+  filter = { # args: (fn)
+    out = ^^.List(len=^.len)
+    out_idx = 0
+    in_idx = 0
+    cur = ^.at(idx=in_idx)!
+    _result = in_idx == ^.len
+      ? ^^.List(len=out_idx).set_range(arr:=out)!
+      : fn(x:=cur idx:=in_idx)!
+        ? @(
+            out_idx := out_idx+1
+            in_idx := in_idx+1
+            out := out.set(idx:=out_idx value:=cur)!
+          )!
+        : @(in_idx:=in_idx+1)!
+    result = @(fn:=fn)._result
   }
 
   _left_len = len / 2

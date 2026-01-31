@@ -28,8 +28,8 @@ func TestBuiltInList(t *testing.T) {
 			l.at(idx=5)!.str + " " +
 			l.at(idx=6)!.str + " "
 	`
-
 	testInterpreterOutput(t, code, "2 2 3 2 2 8 7 ")
+
 	code = `
 		List = "stdlib/collections".import!.List
 		l1 = List(len=3 value=1)
@@ -49,4 +49,30 @@ func TestBuiltInList(t *testing.T) {
 			l.at(idx=6)!.str + " "
 	`
 	testInterpreterOutput(t, code, "1 2 3 -1 7 7 -3 ")
+
+	code = `
+		List = "stdlib/collections".import!.List
+		result = List.range(start=3 end=13)!.filter(fn={
+			result = x % 2
+		})!.map(fn={
+			result = x.str + ","
+		})!.sum!.substr(end=-1)!
+	`
+	testInterpreterOutput(t, code, "3,5,7,9,11")
+
+	code = `
+		List = "stdlib/collections".import!.List
+		result = List.range(start=5 end=-3 stride=-2)!.map(fn={
+			result = x.str + ","
+		})!.sum!.substr(end=-1)!
+	`
+	testInterpreterOutput(t, code, "5,3,1,-1")
+
+	code = `
+		List = "stdlib/collections".import!.List
+		result = List.range(start=5 end=11 stride=2)!.map(fn={
+			result = x.str + ","
+		})!.sum!.substr(end=-1)!
+	`
+	testInterpreterOutput(t, code, "5,7,9")
 }

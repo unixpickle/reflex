@@ -110,6 +110,13 @@ func (p *Parser) parseDefsUntil(
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if _, ok := aliases[name.Val]; ok {
+			return nil, nil, nil, &ParseError{Msg: fmt.Sprintf("name %#v redefined", name.Val), Pos: name.Pos}
+		} else if _, ok = eager[name.Val]; ok {
+			return nil, nil, nil, &ParseError{Msg: fmt.Sprintf("name %#v redefined", name.Val), Pos: name.Pos}
+		} else if _, ok = defs[name.Val]; ok {
+			return nil, nil, nil, &ParseError{Msg: fmt.Sprintf("name %#v redefined", name.Val), Pos: name.Pos}
+		}
 		t := p.peek()
 		if t.Typ == "=" {
 			p.k += 1
