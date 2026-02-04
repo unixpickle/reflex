@@ -1,0 +1,136 @@
+# This is a depth-first search Sudoku solver.
+#
+# The input is fed through stdin, one line per row, using 0 to represent an empty cell.
+# For example, run this command to complete an almost-solved board:
+#
+#     echo "034078912\n602195348\n198342560\n859701423\n426853790\n713924856\n960537284\n287419635\n045286179\n" | go run . examples/sudoku
+#
+# The script will print various errors, e.g. if you enter invalid characters or if there
+# is an error reading from stdin.
+
+io = "stdlib/io".import!
+errors = "stdlib/errors".import!
+List = "stdlib/collections".import!.List
+
+# Read a row of the board as a list of numbers in [0, 9].
+read_row = {
+  parse_result = line &&
+    ^^.errors.assert(
+      cond := line!.len == 9
+      error := "unexpected line length " + line!.len.str
+    )!
+    && str_arr(arr:=^^.List(len=9), str:=line!)!
+
+  # Get an array of integers from a string of digits
+  str_arr = { # args: (arr, str)
+    idx = 0
+    cur_ch = str.bytes.at(y:=idx)!
+    result = idx == str.len
+      ? ^^.errors.ok(x:=arr)!
+      : ^^.errors.assert(
+          cond := cur_ch >= zero_char && cur_ch < zero_char+10,
+          error := "invalid byte: " + cur_ch.str
+        )!
+        && @(idx:=idx+1, arr:=arr.set(idx:=idx, value:=cur_ch - zero_char)!)!
+  }(zero_char:="0".bytes.at(y=0)!)
+
+  result = @(line:=^^.io.readline!).parse_result
+}
+
+# Read the entire board from stdin as a list of length 9*9.
+read_board = {
+  rows_done = 0
+  partial = ^^.errors.ok(x=^^.List(len=0))!
+  result = (rows_done == 9
+    ? partial
+    : partial && @(
+        rows_done := rows_done + 1
+        partial := ^^.read_row!.map[expr=^.partial! + x]!
+      )!)
+}
+
+# Get a list of length 10, where each entry is 1 or 0 depending on whether
+# that number is already used (unavailable) at the given index or not.
+# The first entry in the returned bitmap is unused, but kept for convenience.
+used_bitmap = { # args: (idx, board)
+  col = idx % 9
+  row = idx / 9
+
+  block_start_col = (col / 3) * 3
+  block_start_row = (row / 3) * 3
+
+  _col_values = ^^.List(len=9).map[expr=^.board.at(idx=^.col + idx*9)!]!
+  _row_values = ^^.List(len=9).map[expr=^.board.at(idx=^.row*9 + idx)!]!
+  _block_values = ^^.List(len=9).map(fn={
+    block_row = idx / 3
+    block_col = idx % 3
+    result = ^.board.at(idx=^.block_start_col+block_col + 9*(^.block_start_row + block_row))!
+  })!
+
+  list_bitmap = { # args: (list)
+    i = 0
+    cur = ^^.List(len=10)
+    result = i == list.len
+      ? cur
+      : @(i:=i+1, cur:=cur.set(idx:=list.at(idx=i)!, value=1)!)!
+  }
+
+  merge_bitmaps = {
+    result = ^^.List(len=10).map[
+      expr = ^.a.at(idx:=idx)! || ^.b.at(idx:=idx)! || ^.c.at(idx:=idx)!
+    ]!
+  }
+
+  _result = merge_bitmaps(
+    a:=list_bitmap(list:=_col_values)!
+    b:=list_bitmap(list:=_row_values)!
+    c:=list_bitmap(list:=_block_values)!
+  )!
+  result = @(
+    # Cache values for performance
+    row := row
+    col := col
+    block_start_col := block_start_col
+    block_start_row := block_start_row
+  )._result
+}
+
+allowed_values = { # args: (board, idx)
+  _result = ^^.List.range(start=1, end=10)!.filter[expr=^.used.at(idx=x)! == 0]!
+  result = @(used:=^^.used_bitmap(board:=board, idx:=idx)!)._result
+}
+
+solve = { # args: (board, idx)
+  idx = 0
+
+  try_next = {
+    try_idx = 0
+    try_value = allowed.at(idx:=try_idx)!
+    try_board = ^.board.set(value:=try_value, idx:=^.idx)!
+    _result = solution.success
+      ? solution
+      : @(try_idx:=try_idx+1)!
+    result = try_idx == allowed.len
+      ? ^^.errors.error(x="no solution found")!
+      : @(solution:=^(idx:=^.idx+1 board:=try_board)!)._result
+  }
+
+  result = idx == 9 * 9
+    ? ^^.errors.ok(x:=board)!
+    : board.at(idx=idx)!
+      ? @(idx:=idx+1)!
+      : try_next(allowed:=^^.allowed_values(board:=board idx:=idx)!)!
+}
+
+format_board = {
+  result = ^^.List(len=9).map[
+    expr = ^.board.slice(start:=idx*9 end:=(idx+1)*9)!.map[expr=x.str]!.join!
+  ]!.join(separator="\n")!
+}
+
+result = read_board!.then[
+  expr = ^^.solve(board:=x)!
+]!.then[
+  expr=^^.io.print(line="Found solution:")!
+    && ^^.io.print(line=^^.format_board(board:=x)!)!
+]!

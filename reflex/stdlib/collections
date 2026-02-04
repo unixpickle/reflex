@@ -47,16 +47,42 @@ List = {
             )
   }
 
-  map = {
+  map = { # args: (expr) or (fn)
+    x = ^
     _offset = 0
-    result = ^.len == 0
-      ? ^
-      : ^.len == 1
-        ? ^(value:=fn(x:=^.value, idx:=_offset)!)
-        : ^(
-            left := ^.left.map(fn:=fn, _offset:=_offset)!
-            right := ^.right.map(fn:=fn, _offset:=_offset+^.left.len)!
+    fn = {
+      result = ^(idx:=idx x:=x).expr
+    }
+    _result = x.len == 0
+      ? x
+      : x.len == 1
+        ? x(value:=fn(x:=x.value, idx:=_offset)!)
+        : x(
+            left := @(x:=x.left, _offset:=_offset)!
+            right := @(x:=x.right, _offset:=_offset+x.left.len)!
           )
+    result = @(fn:=fn)._result
+  }
+
+  filter = { # args: (expr) or (fn)
+    x = ^
+    fn = {
+      result = ^(x:=x idx:=idx).expr
+    }
+    out = ^^.List(len=x.len)
+    out_idx = 0
+    in_idx = 0
+    cur = x.at(idx=in_idx)!
+    _result = in_idx == x.len
+      ? ^^.List(len=out_idx).set_range(arr:=out)!
+      : fn(x:=cur idx:=in_idx)!
+        ? @(
+            out_idx := out_idx+1
+            in_idx := in_idx+1
+            out := out.set(idx:=out_idx value:=cur)!
+          )!
+        : @(in_idx:=in_idx+1)!
+    result = @(fn:=fn)._result
   }
 
   sum = {
@@ -66,6 +92,20 @@ List = {
       : ^.len == 1
         ? ^.value
         : ^.left.sum(zero:=zero)! + ^.right.sum(zero:=zero)!
+  }
+
+  join = {
+    zero = ""
+    separator = ""
+    result = ^.len == 0
+      ? zero
+      : ^.len == 1
+        ? ^.value
+        : (
+            ^.left.join(zero:=zero separator:=separator)!
+            + separator
+            + ^.right.join(zero:=zero separator:=separator)!
+          )
   }
 
   set_range = {
@@ -101,28 +141,14 @@ List = {
           : 0
         : 0
 
-    _result = ^^.List(len:=len).map(fn={
-        result = ^.start + idx * ^.stride
-    })!
+    _result = ^^.List(len:=len).map[expr=^.start + idx*^.stride]!
 
     result = @(start:=start end:=end stride:=stride len:=len)._result
   }
 
-  filter = { # args: (fn)
-    out = ^^.List(len=^.len)
-    out_idx = 0
-    in_idx = 0
-    cur = ^.at(idx=in_idx)!
-    _result = in_idx == ^.len
-      ? ^^.List(len=out_idx).set_range(arr:=out)!
-      : fn(x:=cur idx:=in_idx)!
-        ? @(
-            out_idx := out_idx+1
-            in_idx := in_idx+1
-            out := out.set(idx:=out_idx value:=cur)!
-          )!
-        : @(in_idx:=in_idx+1)!
-    result = @(fn:=fn)._result
+  slice = {
+    end = ^.len
+    result = ^^.List(len:=end - start).set_range(arr:=^ src_offset:=start)!
   }
 
   _left_len = len / 2

@@ -8,8 +8,8 @@ import (
 //go:embed stdlib/io
 var ioCode string
 
-//go:embed stdlib/maybe
-var maybeCode string
+//go:embed stdlib/errors
+var errorsCode string
 
 //go:embed stdlib/collections
 var collectionsCode string
@@ -30,8 +30,8 @@ func createStdNode(ctx *Context, name, code string) *Node {
 	return node
 }
 
-func createMaybe(ctx *Context) *Node {
-	return createStdNode(ctx, "maybe", maybeCode)
+func createErrors(ctx *Context) *Node {
+	return createStdNode(ctx, "errors", errorsCode)
 }
 
 func createCollections(ctx *Context) *Node {

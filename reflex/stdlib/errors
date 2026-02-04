@@ -1,0 +1,34 @@
+maybe = {
+  success = 0
+
+  logical_and = {
+    x = ^
+    result = ^.success ? y : x
+  }
+
+  map = { # args: (expr) or (fn)
+    fn = {
+      result = ^(x:=x).expr
+    }
+    result = ^ && ^(result:=fn(x:=^.result)!)
+  }
+
+  then = { # args: (expr) or (fn)
+    fn = {
+      result = ^(x:=x).expr
+    }
+    result = ^ && fn(x:=^!)!
+  }
+}
+
+error = {
+  result = ^^.maybe(error:=x)
+}
+
+assert = {
+  result = cond ? ^^.maybe(success:=1) : ^^.maybe(error:=error)
+}
+
+ok = {
+  result = ^^.maybe(success:=1, result:=x)
+}

@@ -28,7 +28,7 @@ func NewContext() *Context {
 	res.bytesProto = bytesNode(res)
 
 	res.builtIns = map[string]*Node{
-		"maybe":       createMaybe(res),
+		"errors":      createErrors(res),
 		"io":          createIO(res),
 		"collections": createCollections(res),
 	}
@@ -98,9 +98,9 @@ func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
 }
 
 func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
-	clone, ok := c.builtIns["maybe"].Defs.Get(c.Attrs.Get("maybe"))
+	clone, ok := c.builtIns["errors"].Defs.Get(c.Attrs.Get("maybe"))
 	if !ok {
-		panic("maybe module does not have attribute 'maybe'")
+		panic("errors module does not have attribute 'maybe'")
 	}
 	clone = clone.Clone(nil)
 	clone.Pos = pos
@@ -126,7 +126,7 @@ func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
 
 func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 	switch relPath {
-	case "stdlib/io", "stdlib/collections", "stdlib/maybe":
+	case "stdlib/io", "stdlib/collections", "stdlib/errors":
 		name := strings.Split(relPath, "/")[1]
 		return &Node{
 			Kind: NodeKindBackEdge,

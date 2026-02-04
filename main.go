@@ -25,6 +25,7 @@ func main() {
 	toks, err := reflex.Tokenize(path, contentStr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to tokenize:", err)
+		os.Exit(1)
 	}
 	parsed, err := reflex.Parse(toks)
 	if err != nil {
