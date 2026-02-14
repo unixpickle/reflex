@@ -9,17 +9,21 @@ import (
 
 type Context struct {
 	Attrs      *AttrTable
-	intProto   *Node
-	floatProto *Node
-	strProto   *Node
-	bytesProto *Node
-	builtIns   map[string]*Node
+	BackEdges  *BackEdges
+	intProto   *NodeBlock
+	floatProto *NodeBlock
+	strProto   *NodeBlock
+	bytesProto *NodeBlock
+	builtIns   map[string]*NodeBlock
 
-	cachedImports map[string]*Node
+	cachedImports map[string]*NodeBackEdge
 }
 
 func NewContext() *Context {
-	res := &Context{Attrs: NewAttrTable()}
+	res := &Context{
+		Attrs:     NewAttrTable(),
+		BackEdges: NewBackEdges(),
+	}
 
 	// The order matters; strProto creates an int.
 	res.intProto = intNode(res)
@@ -27,112 +31,67 @@ func NewContext() *Context {
 	res.strProto = strNode(res)
 	res.bytesProto = bytesNode(res)
 
-	res.builtIns = map[string]*Node{
+	res.builtIns = map[string]*NodeBlock{
 		"errors":      createErrors(res),
 		"io":          createIO(res),
 		"collections": createCollections(res),
 	}
-	res.cachedImports = map[string]*Node{}
+	res.cachedImports = map[string]*NodeBackEdge{}
 
 	return res
 }
 
 // IntNode creates an integer with all of the built-in methods.
-func (c *Context) IntNode(pos Pos, lit int64) *Node {
-	clone := c.intProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:   NodeKindIntLit,
-			Pos:    pos,
-			IntLit: lit,
-		},
-	}))
-	clone.Defs = MaybeFlatten(clone.Defs)
-	return clone
+func (c *Context) IntNode(pos Pos, lit int64) Node {
+	return c.intProto.Override(c.BackEdges, pos, map[Attr]Node{
+		c.Attrs.Get("_inner"): NewNodeIntLit(c.BackEdges, pos, lit),
+	})
 }
 
 // FloatNode creates a floar with all of the built-in methods.
-func (c *Context) FloatNode(pos Pos, lit float64) *Node {
-	clone := c.floatProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:     NodeKindFloatLit,
-			Pos:      pos,
-			FloatLit: lit,
-		},
-	}))
-	clone.Defs = MaybeFlatten(clone.Defs)
-	return clone
+func (c *Context) FloatNode(pos Pos, lit float64) Node {
+	return c.floatProto.Override(c.BackEdges, pos, map[Attr]Node{
+		c.Attrs.Get("_inner"): NewNodeFloatLit(c.BackEdges, pos, lit),
+	})
 }
 
 // StrNode creates a string with all of the built-in methods.
-func (c *Context) StrNode(pos Pos, lit string) *Node {
-	clone := c.strProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:   NodeKindStrLit,
-			Pos:    pos,
-			StrLit: lit,
-		},
-	}))
-	clone.Defs = MaybeFlatten(clone.Defs)
-	return clone
+func (c *Context) StrNode(pos Pos, lit string) Node {
+	return c.strProto.Override(c.BackEdges, pos, map[Attr]Node{
+		c.Attrs.Get("_inner"): NewNodeStrLit(c.BackEdges, pos, lit),
+	})
 }
 
 // BytesNode creates a byte slice with all of the built-in methods.
-func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
-	clone := c.bytesProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:     NodeKindBytesLit,
-			Pos:      pos,
-			BytesLit: lit,
-		},
-	}))
-	clone.Defs = MaybeFlatten(clone.Defs)
-	return clone
+func (c *Context) BytesNode(pos Pos, lit []byte) Node {
+	return c.bytesProto.Override(c.BackEdges, pos, map[Attr]Node{
+		c.Attrs.Get("_inner"): NewNodeBytesLit(c.BackEdges, pos, lit),
+	})
 }
 
-func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
-	clone, ok := c.builtIns["errors"].Defs.Get(c.Attrs.Get("maybe"))
+func (c *Context) Maybe(pos Pos, result Node, err error) Node {
+	maybeBlock, ok := c.builtIns["errors"].Defs()[c.Attrs.Get("maybe")]
 	if !ok {
 		panic("errors module does not have attribute 'maybe'")
 	}
-	clone = clone.Clone(nil)
-	clone.Pos = pos
-	m := map[Attr]*Node{
+
+	m := map[Attr]Node{
 		c.Attrs.Get("success"): c.IntNode(pos, boolToInt(err == nil)),
 	}
 	if err != nil {
 		m[c.Attrs.Get("error")] = c.StrNode(pos, err.Error())
 	}
 	if result != nil {
-		m[c.Attrs.Get("result")] = result.Clone(nil)
-	} else if err == nil {
-		// Always return some block, even if it's empty.
-		m[c.Attrs.Get("result")] = &Node{
-			Kind: NodeKindBlock,
-			Pos:  pos,
-			Defs: NewFlatDefMap(nil),
-		}
+		m[c.Attrs.Get("result")] = result
 	}
-	clone.Defs = MaybeFlatten(NewOverrideDefMap(clone.Defs, NewFlatDefMap(m)))
-	return clone
+	return maybeBlock.(*NodeBlock).Override(c.BackEdges, pos, m)
 }
 
-func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
+func (c *Context) Import(pos Pos, relPath string) (Node, error) {
 	switch relPath {
 	case "stdlib/io", "stdlib/collections", "stdlib/errors":
 		name := strings.Split(relPath, "/")[1]
-		return &Node{
-			Kind: NodeKindBackEdge,
-			Pos:  pos,
-			Base: c.builtIns[name],
-		}, nil
+		return NewNodeBackEdge(c.BackEdges, pos, c.builtIns[name]), nil
 	default:
 		rp, err := filepath.Rel(pos.File, relPath)
 		if err != nil {
@@ -161,13 +120,9 @@ func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse %#v: %w", absPath, err)
 		}
-		node = &Node{
-			Kind: NodeKindBackEdge,
-			Pos:  pos,
-			Base: node,
-		}
-		c.cachedImports[absPath] = node
-		return node, nil
+		backEdge := NewNodeBackEdge(c.BackEdges, pos, node.(*NodeBlock))
+		c.cachedImports[absPath] = backEdge
+		return backEdge, nil
 	}
 }
 

@@ -30,46 +30,31 @@ func (i *InterpreterError) Error() string {
 	return fmt.Sprintf("%s at\n%s", i.Inner, trace)
 }
 
-func formatAvailable(attrs *AttrTable, node *Node) string {
+func formatAvailable(attrs *AttrTable, node Node) string {
 	var strs []string
-	for attr := range node.Defs.Map(nil) {
-		strs = append(strs, fmt.Sprintf("%#v", attrs.Name(attr)))
+	if block, ok := node.(Block); ok {
+		for attr := range block.Defs() {
+			strs = append(strs, fmt.Sprintf("%#v", attrs.Name(attr)))
+		}
 	}
 	return strings.Join(strs, ", ")
 }
 
 // Evaluate an expression until it becomes a literal or a block.
-func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*Node, error) {
+func Evaluate(ctx *Context, node Node, trace GapStack) (Node, error) {
 	if node == nil {
 		panic("nil node")
 	}
-	if gc == nil {
-		gc = NewGarbageCollector()
-		defer gc.Shutdown()
-	}
 	for {
-		gc.MaybeCollect()
-		pos := node.Pos
+		pos := node.Pos()
 		newTrace := trace
 		newTrace.Push(pos)
 
-		nest := func(newNode *Node, active ...*Node) (*Node, error) {
-			for _, x := range active {
-				gc.Retain(x)
-			}
-			gc.Retain(newNode)
-			gc.MaybeCollect()
-			res, err := Evaluate(ctx, newNode, newTrace, gc)
-			gc.Retain(res)
-			gc.MaybeCollect()
-			gc.Release(res)
-			gc.Release(newNode)
-			for _, x := range active {
-				gc.Release(x)
-			}
+		nest := func(newNode Node) (Node, error) {
+			res, err := Evaluate(ctx, newNode, newTrace)
 			return res, err
 		}
-		doNext := func(newNode *Node) {
+		doNext := func(newNode Node) {
 			if newNode == nil {
 				panic("nil node")
 			}
@@ -77,22 +62,23 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			trace = newTrace
 		}
 
-		switch node.Kind {
-		case NodeKindAccess:
+		switch node := node.(type) {
+		case *NodeAccess:
 			b := node.Base
 			a := node.Attr
 			node = nil
-			base, err := Evaluate(ctx, b, newTrace, gc)
+			base, err := nest(b)
 			if err != nil {
 				return nil, err
 			}
-			if base.Kind != NodeKindBlock {
+			baseBlock, ok := base.(Block)
+			if !ok {
 				return nil, &InterpreterError{
-					Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind),
+					Inner: fmt.Errorf("unexpected kind for access base: %T", base),
 					Trace: newTrace,
 				}
 			}
-			obj, ok := base.Defs.Get(a)
+			obj, ok := baseBlock.Defs()[a]
 			if !ok {
 				return nil, &InterpreterError{
 					Inner: fmt.Errorf(
@@ -104,74 +90,85 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 				}
 			}
 			doNext(obj)
-		case NodeKindOverride:
-			base, err := nest(node.Base, node)
+		case *NodeOverride:
+			base, err := nest(node.Base)
 			if err != nil {
 				return nil, err
 			}
-			newBase := base.Clone(nil)
-			newBase.Pos = node.Pos
-			newBase.Defs = NewOverrideDefMap(newBase.Defs, NewCloneDefMapSingle(node.Defs, node, newBase))
+			baseBlock, ok := base.(Block)
+			if !ok {
+				return nil, &InterpreterError{
+					Inner: fmt.Errorf("unexpected kind for override base: %T", base),
+					Trace: newTrace,
+				}
+			}
 
-			if len(node.Aliases) > 0 {
-				aliasMap := map[Attr]*Node{}
-				for dst, src := range node.Aliases {
-					var ok bool
-					aliasMap[dst], ok = newBase.Defs.Get(src)
-					if !ok {
-						return nil, &InterpreterError{
-							Inner: fmt.Errorf(
-								"could not create alias from %s to %s because source attribute does not exist",
-								ctx.Attrs.Name(src),
-								ctx.Attrs.Name(dst),
-							),
-							Trace: newTrace,
-						}
+			newBlock := &NodeBlock{
+				NodeShared: NodeShared{
+					P: pos,
+				},
+				DefMap: map[Attr]Node{},
+				EdgeID: baseBlock.ScopeEdgeID(),
+			}
+
+			preClone := map[Attr]Node{}
+			for k, v := range baseBlock.Defs() {
+				preClone[k] = v
+			}
+			for dst, src := range node.Aliases {
+				srcVal, ok := preClone[src]
+				if !ok {
+					return nil, &InterpreterError{
+						Inner: fmt.Errorf(
+							"could not create alias from %s to %s because source attribute does not exist",
+							ctx.Attrs.Name(src),
+							ctx.Attrs.Name(dst),
+						),
+						Trace: newTrace,
 					}
 				}
-				newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(aliasMap))
+				preClone[dst] = srcVal
+			}
+			for k, v := range preClone {
+				baseMap := map[BackEdgeID]Scope{baseBlock.ScopeEdgeID(): newBlock}
+				if node.Defs[k] == nil && node.Eager[k] == nil {
+					newBlock.DefMap[k] = CloneNode(ctx.BackEdges, v, baseMap)
+				}
 			}
 
-			if node.Eager != nil {
-				// We will never actually use this mapping, since there are no back edges pointed
-				// at nil, but this is crucial to reduce the size of ReplaceMaps.
-				// If the result (newBase) is cloned again in the future, we will now create a
-				// new mapping nil -> newNewBase.
-				// If we iterate N times, we'll always have nil -> newNewNew...Base.
-				// Without this, if the object is repeatedly cloned, then we end up with a mapping
-				// like newBase->newNewBase, newNewBase -> newNewNewBase, etc, with all of these
-				// redundant and unused mappings.
-				var mapping *ReplaceMap[Node]
-				mapping = mapping.Inserting(nil, newBase)
+			overrideMap := map[BackEdgeID]Scope{node.EdgeID: newBlock}
+			for k, v := range node.Defs {
+				newBlock.DefMap[k] = CloneNode(ctx.BackEdges, v, overrideMap)
+			}
 
-				newDefs := map[Attr]*Node{}
-				for k, v := range node.Eager.Map(nil) {
-					result, err := nest(v, node, newBase)
-					if err != nil {
-						return nil, err
+			for k, v := range node.Eager {
+				result, err := nest(v)
+				if err != nil {
+					return nil, err
+				}
+				block, ok := result.(Block)
+				if !ok {
+					return nil, &InterpreterError{
+						Inner: fmt.Errorf(
+							"eager assignment to %s produced a non-block type %T",
+							ctx.Attrs.Name(k),
+							result,
+						),
+						Trace: newTrace,
 					}
-					resNode := result.Clone(mapping)
-					newDefs[k] = resNode
-					gc.Retain(resNode)
 				}
-				for _, v := range newDefs {
-					gc.Release(v)
-				}
-				if len(newDefs) > 0 {
-					newBase.Defs = NewOverrideDefMap(newBase.Defs, NewFlatDefMap(newDefs))
-				}
+				newBlock.DefMap[k] = NewNodeFrozenBlock(ctx.BackEdges, block)
 			}
-			newBase.Defs = MaybeFlatten(newBase.Defs)
-			return newBase, nil
-		case NodeKindBackEdge:
-			if node.Base.Kind != NodeKindBlock {
-				panic("unexpected back edge type: " + node.Base.Kind.String())
-			}
-			return node.Base, nil
-		case NodeKindBuiltInOp:
+
+			newBlock.RecomputeBackEdges(ctx.BackEdges)
+
+			return newBlock, nil
+		case *NodeBackEdge:
+			return node.Node, nil
+		case *NodeBuiltInOp:
 			op := node.BuiltInOp
 			for {
-				result, nextExpr, err := op.Next(node.Base)
+				result, nextExpr, err := op.Next(node.Node)
 				if err != nil {
 					return nil, &InterpreterError{Inner: err, Trace: trace}
 				}
@@ -179,16 +176,16 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 					doNext(result)
 					break
 				}
-				nextResult, err := nest(nextExpr, node)
+				nextResult, err := nest(nextExpr)
 				if err != nil {
 					return nil, err
 				}
-				op, err = op.Tell(node.Base, nextResult)
+				op, err = op.Tell(node.Node, nextResult)
 				if err != nil {
 					return nil, &InterpreterError{Inner: err, Trace: newTrace}
 				}
 			}
-		case NodeKindIntLit, NodeKindFloatLit, NodeKindStrLit, NodeKindBytesLit, NodeKindBlock:
+		case *NodeIntLit, *NodeFloatLit, *NodeStrLit, *NodeBytesLit, *NodeBlock, NodeFrozenBlock:
 			return node, nil
 		default:
 			panic("unknown node type")

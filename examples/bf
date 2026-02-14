@@ -9,7 +9,7 @@ Stack = {
   prefix = ^.Stack # infinite prefix of all 0's
   item = 0
   push = { # argument: x
-    result = ^^.Stack(prefix=^, item:=x)
+    result = ^^.Stack(prefix:=^, item:=x)
   }
 }
 

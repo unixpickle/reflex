@@ -31,7 +31,7 @@ func TestInterpreterEager(t *testing.T) {
     y = {
       result = a + b
     }
-    result = y(a=x, b:=4+5)!
+    result = y(a=x, b:=4+5).result
   `
 	testInterpreterOutput[int64](t, code, 12)
 }
@@ -63,6 +63,17 @@ func TestInterpreterStringOps(t *testing.T) {
     result = z + " " + z.len.str + z.substr(start=1)!
   `
 	testInterpreterOutput(t, code, "hi7 3i7")
+}
+
+func TestInterpreterDoubleOverride(t *testing.T) {
+	code := `
+    block = {
+      expr = @(y=3).x
+	  result = expr
+    }
+    result = block[x=123]!
+  `
+	testInterpreterOutput[int64](t, code, 123)
 }
 
 func TestInterpreterFactor(t *testing.T) {
@@ -170,6 +181,49 @@ func TestInterpreterFloat(t *testing.T) {
 	testInterpreterOutput[int64](t, code, 2)
 }
 
+func TestInterpreterOverrideAccess(t *testing.T) {
+	code := `
+		List = {
+			map = {
+				idx = 0
+			}
+			idxs = {
+				result = ^.map[expr=idx.add[y=^.idx]!]
+			}
+		}
+		result = List[].idxs!.expr.str
+	`
+	testInterpreterOutput[string](t, code, "0")
+}
+
+func TestStack(t *testing.T) {
+	code := `
+		Stack = {
+			prefix = ^.Stack # infinite prefix of all 0's
+			item = 0
+			push = { # argument: x
+				result = ^^.Stack(prefix=^, item:=x)
+			}
+		}
+		Tape = {
+			left = ^.Stack
+			right = ^.Stack
+			move_right = @(
+				left := left.push(x:=right.item)!
+			)
+			move_left = @(
+				left := left.prefix
+			)
+			set1 = @(
+				left := left(item:=1)
+			)
+		}
+		t = Tape.move_right.set1.move_left
+		result = t.left.item
+	`
+	testInterpreterOutput[int64](t, code, 0)
+}
+
 func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	toks, err := Tokenize("file", code)
 	if err != nil {
@@ -184,39 +238,37 @@ func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	if err != nil {
 		t.Fatalf("failed to node-ify: %s", err)
 	}
-	access := &Node{
-		Kind: NodeKindAccess,
-		Pos:  Pos{File: "interpreter"},
-		Base: &Node{
-			Kind: NodeKindAccess,
-			Pos:  Pos{File: "interpreter"},
-			Base: node,
-			Attr: ctx.Attrs.Get("result"),
-		},
-		Attr: ctx.Attrs.Get("_inner"),
-	}
+	access := NewNodeAccess(
+		Pos{File: "interpreter"},
+		NewNodeAccess(
+			Pos{File: "interpreter"},
+			node,
+			ctx.Attrs.Get("result"),
+		),
+		ctx.Attrs.Get("_inner"),
+	)
 	var gs GapStack
 	gs.Push(Pos{File: "test"})
-	result, err := Evaluate(ctx, access, gs, nil)
+	result, err := Evaluate(ctx, access, gs)
 	if err != nil {
 		t.Fatalf("failed to evaluate: %s", err)
 	}
 	var x any = expected
 	if intval, ok := x.(int64); ok {
-		if result.IntLit != intval {
-			t.Fatalf("unexpected output: %d (expected %d)", result.IntLit, x)
+		if result.(*NodeIntLit).Lit != intval {
+			t.Fatalf("unexpected output: %d (expected %d)", result.(*NodeIntLit).Lit, x)
 		}
 	} else if strval, ok := x.(string); ok {
-		if result.StrLit != strval {
-			t.Fatalf("unexpected output: %s (expected %s)", result.StrLit, x)
+		if result.(*NodeStrLit).Lit != strval {
+			t.Fatalf("unexpected output: %s (expected %s)", result.(*NodeStrLit).Lit, x)
 		}
 	} else if bytesval, ok := x.([]byte); ok {
-		if !bytes.Equal(result.BytesLit, bytesval) {
-			t.Fatalf("unexpected output: %#v (expected %#v)", result.BytesLit, x)
+		if !bytes.Equal(result.(*NodeBytesLit).Lit, bytesval) {
+			t.Fatalf("unexpected output: %#v (expected %#v)", result.(*NodeBytesLit).Lit, x)
 		}
 	} else if fval, ok := x.(float64); ok {
-		if result.FloatLit != fval {
-			t.Fatalf("unexpected output: %f (expected %f)", result.FloatLit, x)
+		if result.(*NodeFloatLit).Lit != fval {
+			t.Fatalf("unexpected output: %f (expected %f)", result.(*NodeFloatLit).Lit, x)
 		}
 	} else {
 		panic("unknown type")
