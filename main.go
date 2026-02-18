@@ -49,14 +49,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	resBlock, ok := result.(reflex.Block)
+	resBlock, ok := unlazify(result).(reflex.Block)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "unexpected result type:", fmt.Sprintf("%T", result))
 		os.Exit(1)
 	}
 
 	if inner, ok := resBlock.Defs()[ctx.Attrs.Get("_inner")]; ok {
-		switch inner := inner.(type) {
+		switch inner := unlazify(inner).(type) {
 		case *reflex.NodeIntLit:
 			fmt.Println(inner.Lit)
 		case *reflex.NodeStrLit:
@@ -66,10 +66,10 @@ func main() {
 			os.Exit(1)
 		}
 	} else if success, ok := resBlock.Defs()[ctx.Attrs.Get("success")]; ok {
-		if grabIntLiteral(ctx, success) == 0 {
+		if grabIntLiteral(ctx, unlazify(success)) == 0 {
 			if errMsg, ok := resBlock.Defs()[ctx.Attrs.Get("error")]; ok {
-				if errMsgBlock, ok := errMsg.(reflex.Block); ok {
-					if inner, ok := errMsgBlock.Defs()[ctx.Attrs.Get("_inner")].(*reflex.NodeStrLit); ok {
+				if errMsgBlock, ok := unlazify(errMsg).(reflex.Block); ok {
+					if inner, ok := unlazify(errMsgBlock.Defs()[ctx.Attrs.Get("_inner")]).(*reflex.NodeStrLit); ok {
 						fmt.Fprintln(os.Stderr, "error: "+inner.Lit)
 						os.Exit(1)
 					}
@@ -84,17 +84,24 @@ func main() {
 	}
 }
 
+func unlazify(obj reflex.Node) reflex.Node {
+	if x, ok := obj.(*reflex.NodeLazyClone); ok {
+		return x.Inner()
+	}
+	return obj
+}
+
 func grabIntLiteral(ctx *reflex.Context, obj reflex.Node) int64 {
 	if intLit, ok := obj.(*reflex.NodeIntLit); ok {
 		return intLit.Lit
 	} else if block, ok := obj.(reflex.Block); ok {
 		if x, ok := block.Defs()[ctx.Attrs.Get("_inner")]; ok {
-			if intLit, ok := x.(*reflex.NodeIntLit); ok {
+			if intLit, ok := unlazify(x).(*reflex.NodeIntLit); ok {
 				return intLit.Lit
 			}
 		}
 	}
-	fmt.Fprintln(os.Stderr, "expected int literal but got unexpected type")
+	fmt.Fprintln(os.Stderr, "expected int literal but got unexpected type", fmt.Sprintf("%T", obj))
 	os.Exit(1)
 	panic("unreachable")
 }

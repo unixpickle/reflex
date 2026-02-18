@@ -132,13 +132,20 @@ func Evaluate(ctx *Context, node Node, trace GapStack) (Node, error) {
 			for k, v := range preClone {
 				baseMap := map[BackEdgeID]Scope{baseBlock.ScopeEdgeID(): newBlock}
 				if node.Defs[k] == nil && node.Eager[k] == nil {
-					newBlock.DefMap[k] = CloneNode(ctx.BackEdges, v, baseMap)
+					newBlock.DefMap[k] = NewNodeLazyClone(ctx.BackEdges, v, baseMap)
 				}
 			}
 
 			overrideMap := map[BackEdgeID]Scope{node.EdgeID: newBlock}
 			for k, v := range node.Defs {
-				newBlock.DefMap[k] = CloneNode(ctx.BackEdges, v, overrideMap)
+				// Freeze back edges to the base block since they must refer to some other
+				// object that is not being overridden.
+				newBlock.DefMap[k] = CloneNode(
+					ctx.BackEdges,
+					v,
+					overrideMap,
+					ctx.BackEdges.MakeSet(baseBlock.ScopeEdgeID()),
+				)
 			}
 
 			for k, v := range node.Eager {
@@ -165,6 +172,10 @@ func Evaluate(ctx *Context, node Node, trace GapStack) (Node, error) {
 			return newBlock, nil
 		case *NodeBackEdge:
 			return node.Node, nil
+		case NodeFrozenBackEdge:
+			return node.NodeBackEdge.Node, nil
+		case *NodeLazyClone:
+			doNext(node.Inner())
 		case *NodeBuiltInOp:
 			op := node.BuiltInOp
 			for {

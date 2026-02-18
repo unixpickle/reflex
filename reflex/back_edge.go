@@ -13,6 +13,9 @@ type BackEdgeSet struct {
 }
 
 func (b *BackEdgeSet) matches(edges []BackEdgeID) bool {
+	if b == nil {
+		return false
+	}
 	if len(edges) != len(b.Set) {
 		return false
 	}
@@ -25,6 +28,9 @@ func (b *BackEdgeSet) matches(edges []BackEdgeID) bool {
 }
 
 func (b *BackEdgeSet) Contains(id BackEdgeID) bool {
+	if b == nil {
+		return false
+	}
 	_, ok := b.Set[id]
 	return ok
 }
@@ -59,6 +65,19 @@ func (b *BackEdges) MakeSet(edges ...BackEdgeID) *BackEdgeSet {
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i] < sorted[j]
 	})
+	return b.makeSetSorted(sorted)
+}
+
+// MakeSetMap creates or returns a unque set for the back edges.
+func (b *BackEdges) MakeSetMap(e map[BackEdgeID]struct{}) *BackEdgeSet {
+	edges := make([]BackEdgeID, 0, len(e))
+	for x := range e {
+		edges = append(edges, x)
+	}
+	return b.MakeSet(edges...)
+}
+
+func (b *BackEdges) makeSetSorted(sorted []BackEdgeID) *BackEdgeSet {
 	var hash maphash.Hash
 	hash.SetSeed(b.seed)
 	for _, id := range sorted {
@@ -77,7 +96,7 @@ func (b *BackEdges) MakeSet(edges ...BackEdgeID) *BackEdgeSet {
 	for _, x := range sorted {
 		newSet.Set[x] = struct{}{}
 	}
-	if len(newSet.Set) != len(edges) {
+	if len(newSet.Set) != len(sorted) {
 		panic("duplicate BackEdgeID passed to MakeSet")
 	}
 	b.sets[sum] = append(b.sets[sum], newSet)
