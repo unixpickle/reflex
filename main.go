@@ -38,60 +38,61 @@ func main() {
 		fmt.Fprintln(os.Stderr, "failed to process nodes:", err)
 		os.Exit(1)
 	}
-	access := &reflex.Node{
-		Kind: reflex.NodeKindAccess,
-		Pos:  reflex.Pos{File: "interpreter"},
-		Base: node,
-		Attr: ctx.Attrs.Get("result"),
+	pos := reflex.Pos{File: "interpreter"}
+	base := reflex.NodeBase{P: pos}
+	access := &reflex.NodeAccess{
+		NodeBase: base,
+		Base:     node,
+		Attr:     ctx.Attrs.Get("result"),
 	}
-	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack(), nil)
+	rawResult, err := reflex.Evaluate(ctx, access, reflex.NewGapStack(), nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to evaluate:", err)
 		os.Exit(1)
 	}
-
-	if result.Kind != reflex.NodeKindBlock {
-		fmt.Fprintln(os.Stderr, "unexpected result type:", result.Kind)
-		os.Exit(1)
-	}
+	result := mustCast[*reflex.NodeBlock]("result", rawResult)
 
 	if inner, ok := result.Defs.Get(ctx.Attrs.Get("_inner")); ok {
-		if inner.Kind == reflex.NodeKindIntLit {
-			fmt.Println(inner.IntLit)
-		} else if inner.Kind == reflex.NodeKindStrLit {
-			fmt.Println(inner.StrLit)
-		} else {
-			fmt.Fprintln(os.Stderr, "unexpected result._inner type:", result.Kind)
+		switch inner := inner.(type) {
+		case *reflex.NodeIntLit:
+			fmt.Println(inner.Lit)
+		case *reflex.NodeStrLit:
+			fmt.Println(inner.Lit)
+		default:
+			fmt.Fprintln(os.Stderr, "unexpected type for result._inner:", fmt.Sprintf("%T", inner))
 			os.Exit(1)
 		}
 	} else if success, ok := result.Defs.Get(ctx.Attrs.Get("success")); ok {
-		if grabIntLiteral(ctx, success) == 0 {
-			if errMsg, ok := result.Defs.Get(ctx.Attrs.Get("error")); ok {
-				if inner, ok := errMsg.Defs.Get(ctx.Attrs.Get("_inner")); ok {
-					fmt.Fprintln(os.Stderr, "error: "+inner.StrLit)
-					os.Exit(1)
-				}
+		if mustCastInner[*reflex.NodeIntLit](ctx, "result.success", success).Lit == 0 {
+			if errObj, ok := result.Defs.Get(ctx.Attrs.Get("error")); ok {
+				errLit := mustCastInner[*reflex.NodeStrLit](ctx, "result.error", errObj)
+				fmt.Fprintln(os.Stderr, "error: "+errLit.Lit)
+				os.Exit(1)
 			}
-			fmt.Fprintln(os.Stderr, "unsuccessful result")
+			fmt.Fprintln(os.Stderr, "unsuccessful result with no error")
 			os.Exit(1)
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, "an unexpected result structure was returned")
+		fmt.Fprintln(os.Stderr, "the program's result is not a literal or a `maybe` structure")
 		os.Exit(1)
 	}
 }
 
-func grabIntLiteral(ctx *reflex.Context, obj *reflex.Node) int64 {
-	if obj.Kind == reflex.NodeKindIntLit {
-		return obj.IntLit
-	} else if obj.Kind == reflex.NodeKindBlock {
-		if x, ok := obj.Defs.Get(ctx.Attrs.Get("_inner")); ok {
-			if x.Kind == reflex.NodeKindIntLit {
-				return x.IntLit
-			}
-		}
+func mustCast[T any](name string, obj any) T {
+	if x, ok := obj.(T); ok {
+		return x
 	}
-	fmt.Fprintln(os.Stderr, "expected int literal but got unexpected type")
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("unexpected type for %s: %T", name, obj))
 	os.Exit(1)
-	panic("unreachable")
+	panic("")
+}
+
+func mustCastInner[T any](ctx *reflex.Context, name string, obj any) T {
+	block := mustCast[*reflex.NodeBlock](name, obj)
+	inner, ok := block.Defs.Get(ctx.Attrs.Get("_inner"))
+	if !ok {
+		fmt.Fprintln(os.Stderr, fmt.Sprintf("missing _inner on %s", name))
+		os.Exit(1)
+	}
+	return mustCast[T](name+"._inner", inner)
 }

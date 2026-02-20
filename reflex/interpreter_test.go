@@ -238,14 +238,14 @@ func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	if err != nil {
 		t.Fatalf("failed to node-ify: %s", err)
 	}
-	access := &Node{
-		Kind: NodeKindAccess,
-		Pos:  Pos{File: "interpreter"},
-		Base: &Node{
-			Kind: NodeKindAccess,
-			Pos:  Pos{File: "interpreter"},
-			Base: node,
-			Attr: ctx.Attrs.Get("result"),
+	pos := Pos{File: "interpreter"}
+	base := NodeBase{P: pos}
+	access := &NodeAccess{
+		NodeBase: base,
+		Base: &NodeAccess{
+			NodeBase: base,
+			Base:     node,
+			Attr:     ctx.Attrs.Get("result"),
 		},
 		Attr: ctx.Attrs.Get("_inner"),
 	}
@@ -257,20 +257,20 @@ func testInterpreterOutput[T literal](t *testing.T, code string, expected T) {
 	}
 	var x any = expected
 	if intval, ok := x.(int64); ok {
-		if result.IntLit != intval {
-			t.Fatalf("unexpected output: %d (expected %d)", result.IntLit, x)
+		if result.(*NodeIntLit).Lit != intval {
+			t.Fatalf("unexpected output: %d (expected %d)", result.(*NodeIntLit).Lit, x)
 		}
 	} else if strval, ok := x.(string); ok {
-		if result.StrLit != strval {
-			t.Fatalf("unexpected output: %s (expected %s)", result.StrLit, x)
+		if result.(*NodeStrLit).Lit != strval {
+			t.Fatalf("unexpected output: %s (expected %s)", result.(*NodeStrLit).Lit, x)
 		}
 	} else if bytesval, ok := x.([]byte); ok {
-		if !bytes.Equal(result.BytesLit, bytesval) {
-			t.Fatalf("unexpected output: %#v (expected %#v)", result.BytesLit, x)
+		if !bytes.Equal(result.(*NodeBytesLit).Lit, bytesval) {
+			t.Fatalf("unexpected output: %#v (expected %#v)", result.(*NodeBytesLit).Lit, x)
 		}
 	} else if fval, ok := x.(float64); ok {
-		if result.FloatLit != fval {
-			t.Fatalf("unexpected output: %f (expected %f)", result.FloatLit, x)
+		if result.(*NodeFloatLit).Lit != fval {
+			t.Fatalf("unexpected output: %f (expected %f)", result.(*NodeFloatLit).Lit, x)
 		}
 	} else {
 		panic("unknown type")

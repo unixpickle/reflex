@@ -9,13 +9,13 @@ import (
 
 type Context struct {
 	Attrs      *AttrTable
-	intProto   *Node
-	floatProto *Node
-	strProto   *Node
-	bytesProto *Node
-	builtIns   map[string]*Node
+	intProto   *NodeBlock
+	floatProto *NodeBlock
+	strProto   *NodeBlock
+	bytesProto *NodeBlock
+	builtIns   map[string]*NodeBlock
 
-	cachedImports map[string]*Node
+	cachedImports map[string]*NodeBackEdge
 }
 
 func NewContext() *Context {
@@ -27,25 +27,24 @@ func NewContext() *Context {
 	res.strProto = strNode(res)
 	res.bytesProto = bytesNode(res)
 
-	res.builtIns = map[string]*Node{
+	res.builtIns = map[string]*NodeBlock{
 		"errors":      createErrors(res),
 		"io":          createIO(res),
 		"collections": createCollections(res),
 	}
-	res.cachedImports = map[string]*Node{}
+	res.cachedImports = map[string]*NodeBackEdge{}
 
 	return res
 }
 
 // IntNode creates an integer with all of the built-in methods.
-func (c *Context) IntNode(pos Pos, lit int64) *Node {
-	clone := c.intProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:   NodeKindIntLit,
-			Pos:    pos,
-			IntLit: lit,
+func (c *Context) IntNode(pos Pos, lit int64) Node {
+	clone := c.intProto.Clone(nil).(*NodeBlock)
+	clone.P = pos
+	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]Node{
+		c.Attrs.Get("_inner"): &NodeIntLit{
+			LitBase: LitBase{NodeBase: NodeBase{P: pos}},
+			Lit:     lit,
 		},
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
@@ -53,14 +52,13 @@ func (c *Context) IntNode(pos Pos, lit int64) *Node {
 }
 
 // FloatNode creates a floar with all of the built-in methods.
-func (c *Context) FloatNode(pos Pos, lit float64) *Node {
-	clone := c.floatProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:     NodeKindFloatLit,
-			Pos:      pos,
-			FloatLit: lit,
+func (c *Context) FloatNode(pos Pos, lit float64) Node {
+	clone := c.floatProto.Clone(nil).(*NodeBlock)
+	clone.P = pos
+	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]Node{
+		c.Attrs.Get("_inner"): &NodeFloatLit{
+			LitBase: LitBase{NodeBase: NodeBase{P: pos}},
+			Lit:     lit,
 		},
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
@@ -68,14 +66,13 @@ func (c *Context) FloatNode(pos Pos, lit float64) *Node {
 }
 
 // StrNode creates a string with all of the built-in methods.
-func (c *Context) StrNode(pos Pos, lit string) *Node {
-	clone := c.strProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:   NodeKindStrLit,
-			Pos:    pos,
-			StrLit: lit,
+func (c *Context) StrNode(pos Pos, lit string) Node {
+	clone := c.strProto.Clone(nil).(*NodeBlock)
+	clone.P = pos
+	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]Node{
+		c.Attrs.Get("_inner"): &NodeStrLit{
+			LitBase: LitBase{NodeBase: NodeBase{P: pos}},
+			Lit:     lit,
 		},
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
@@ -83,28 +80,27 @@ func (c *Context) StrNode(pos Pos, lit string) *Node {
 }
 
 // BytesNode creates a byte slice with all of the built-in methods.
-func (c *Context) BytesNode(pos Pos, lit []byte) *Node {
-	clone := c.bytesProto.Clone(nil)
-	clone.Pos = pos
-	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]*Node{
-		c.Attrs.Get("_inner"): &Node{
-			Kind:     NodeKindBytesLit,
-			Pos:      pos,
-			BytesLit: lit,
+func (c *Context) BytesNode(pos Pos, lit []byte) Node {
+	clone := c.bytesProto.Clone(nil).(*NodeBlock)
+	clone.P = pos
+	clone.Defs = NewOverrideDefMap(clone.Defs, NewFlatDefMap(map[Attr]Node{
+		c.Attrs.Get("_inner"): &NodeBytesLit{
+			LitBase: LitBase{NodeBase: NodeBase{P: pos}},
+			Lit:     lit,
 		},
 	}))
 	clone.Defs = MaybeFlatten(clone.Defs)
 	return clone
 }
 
-func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
-	clone, ok := c.builtIns["errors"].Defs.Get(c.Attrs.Get("maybe"))
+func (c *Context) Maybe(pos Pos, result Node, err error) Node {
+	maybe, ok := c.builtIns["errors"].Defs.Get(c.Attrs.Get("maybe"))
 	if !ok {
 		panic("errors module does not have attribute 'maybe'")
 	}
-	clone = clone.Clone(nil)
-	clone.Pos = pos
-	m := map[Attr]*Node{
+	clone := maybe.Clone(nil).(*NodeBlock)
+	clone.P = pos
+	m := map[Attr]Node{
 		c.Attrs.Get("success"): c.IntNode(pos, boolToInt(err == nil)),
 	}
 	if err != nil {
@@ -114,30 +110,29 @@ func (c *Context) Maybe(pos Pos, result *Node, err error) *Node {
 		m[c.Attrs.Get("result")] = result.Clone(nil)
 	} else if err == nil {
 		// Always return some block, even if it's empty.
-		m[c.Attrs.Get("result")] = &Node{
-			Kind: NodeKindBlock,
-			Pos:  pos,
-			Defs: NewFlatDefMap(nil),
+		m[c.Attrs.Get("result")] = &NodeBlock{
+			NodeBase: NodeBase{P: pos},
+			Defs:     NewFlatDefMap(nil),
 		}
 	}
 	clone.Defs = MaybeFlatten(NewOverrideDefMap(clone.Defs, NewFlatDefMap(m)))
 	return clone
 }
 
-func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
+func (c *Context) Import(pos Pos, relPath string) (Node, error) {
 	switch relPath {
 	case "stdlib/io", "stdlib/collections", "stdlib/errors":
 		name := strings.Split(relPath, "/")[1]
-		return &Node{
-			Kind: NodeKindBackEdge,
-			Pos:  pos,
-			Base: c.builtIns[name],
+		return &NodeBackEdge{
+			NodeBase: NodeBase{P: pos},
+			Ref:      c.builtIns[name],
 		}, nil
 	default:
-		rp, err := filepath.Rel(pos.File, relPath)
+		absBase, err := filepath.Abs(pos.File)
 		if err != nil {
 			return nil, err
 		}
+		rp := filepath.Join(filepath.Dir(absBase), relPath)
 		absPath, err := filepath.Abs(rp)
 		if err != nil {
 			return nil, err
@@ -161,13 +156,12 @@ func (c *Context) Import(pos Pos, relPath string) (*Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse %#v: %w", absPath, err)
 		}
-		node = &Node{
-			Kind: NodeKindBackEdge,
-			Pos:  pos,
-			Base: node,
+		n := &NodeBackEdge{
+			NodeBase: NodeBase{P: pos},
+			Ref:      node,
 		}
-		c.cachedImports[absPath] = node
-		return node, nil
+		c.cachedImports[absPath] = n
+		return n, nil
 	}
 }
 

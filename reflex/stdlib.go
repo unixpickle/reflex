@@ -14,7 +14,7 @@ var errorsCode string
 //go:embed stdlib/collections
 var collectionsCode string
 
-func createStdNode(ctx *Context, name, code string) *Node {
+func createStdNode(ctx *Context, name, code string) *NodeBlock {
 	toks, err := Tokenize("<stdlib/"+name+">", code)
 	if err != nil {
 		panic(err)
@@ -27,20 +27,20 @@ func createStdNode(ctx *Context, name, code string) *Node {
 	if err != nil {
 		panic(err)
 	}
-	return node
+	return node.(*NodeBlock)
 }
 
-func createErrors(ctx *Context) *Node {
+func createErrors(ctx *Context) *NodeBlock {
 	return createStdNode(ctx, "errors", errorsCode)
 }
 
-func createCollections(ctx *Context) *Node {
+func createCollections(ctx *Context) *NodeBlock {
 	return createStdNode(ctx, "collections", collectionsCode)
 }
 
-func createIO(ctx *Context) *Node {
+func createIO(ctx *Context) *NodeBlock {
 	node := createStdNode(ctx, "io", ioCode)
-	node.Defs = NewOverrideDefMap(node.Defs, NewFlatDefMap(map[Attr]*Node{
+	node.Defs = NewOverrideDefMap(node.Defs, NewFlatDefMap(map[Attr]Node{
 		ctx.Attrs.Get("stdout"): createFile(ctx, os.Stdout),
 		ctx.Attrs.Get("stdin"):  createFile(ctx, os.Stdin),
 		ctx.Attrs.Get("stderr"): createFile(ctx, os.Stderr),
@@ -48,27 +48,24 @@ func createIO(ctx *Context) *Node {
 	return node
 }
 
-func createFile(ctx *Context, f *os.File) *Node {
+func createFile(ctx *Context, f *os.File) Node {
 	pos := Pos{File: "<builtin/io:file>", Line: 0, Col: 0}
 
-	result := &Node{
-		Kind: NodeKindBlock,
-		Pos:  pos,
+	result := &NodeBlock{
+		NodeBase: NodeBase{P: pos},
 	}
 
-	write := &Node{
-		Kind: NodeKindBlock,
-		Pos:  pos,
+	write := &NodeBlock{
+		NodeBase: NodeBase{P: pos},
 	}
-	write.Defs = NewFlatDefMap(map[Attr]*Node{
-		ctx.Attrs.Get("result"): &Node{
-			Kind: NodeKindBuiltInOp,
-			Pos:  pos,
-			Base: write,
-			BuiltInOp: newFnBuiltInOp(
+	write.Defs = NewFlatDefMap(map[Attr]Node{
+		ctx.Attrs.Get("result"): &NodeBuiltInOp{
+			NodeBase: NodeBase{P: pos},
+			Context:  write,
+			Op: newFnBuiltInOp(
 				ctx.Attrs,
 				[]string{"bytes._inner"},
-				func(args map[string]*Node) (*Node, error) {
+				func(args map[string]Node) (Node, error) {
 					x := args["bytes._inner"]
 					xValue, err := literalValue[[]byte](x)
 					if err != nil {
@@ -81,19 +78,17 @@ func createFile(ctx *Context, f *os.File) *Node {
 		},
 	})
 
-	close := &Node{
-		Kind: NodeKindBlock,
-		Pos:  pos,
+	close := &NodeBlock{
+		NodeBase: NodeBase{P: pos},
 	}
-	close.Defs = NewFlatDefMap(map[Attr]*Node{
-		ctx.Attrs.Get("result"): &Node{
-			Kind: NodeKindBuiltInOp,
-			Pos:  pos,
-			Base: close,
-			BuiltInOp: newFnBuiltInOp(
+	close.Defs = NewFlatDefMap(map[Attr]Node{
+		ctx.Attrs.Get("result"): &NodeBuiltInOp{
+			NodeBase: NodeBase{P: pos},
+			Context:  close,
+			Op: newFnBuiltInOp(
 				ctx.Attrs,
 				[]string{},
-				func(args map[string]*Node) (*Node, error) {
+				func(args map[string]Node) (Node, error) {
 					err := f.Close()
 					return ctx.Maybe(pos, nil, err), nil
 				},
@@ -101,19 +96,17 @@ func createFile(ctx *Context, f *os.File) *Node {
 		},
 	})
 
-	read := &Node{
-		Kind: NodeKindBlock,
-		Pos:  pos,
+	read := &NodeBlock{
+		NodeBase: NodeBase{P: pos},
 	}
-	read.Defs = NewFlatDefMap(map[Attr]*Node{
-		ctx.Attrs.Get("result"): &Node{
-			Kind: NodeKindBuiltInOp,
-			Pos:  pos,
-			Base: read,
-			BuiltInOp: newFnBuiltInOp(
+	read.Defs = NewFlatDefMap(map[Attr]Node{
+		ctx.Attrs.Get("result"): &NodeBuiltInOp{
+			NodeBase: NodeBase{P: pos},
+			Context:  read,
+			Op: newFnBuiltInOp(
 				ctx.Attrs,
 				[]string{"n._inner"},
-				func(args map[string]*Node) (*Node, error) {
+				func(args map[string]Node) (Node, error) {
 					nNode := args["n._inner"]
 					n, err := literalValue[int64](nNode)
 					if err != nil {
@@ -127,7 +120,7 @@ func createFile(ctx *Context, f *os.File) *Node {
 		},
 	})
 
-	result.Defs = NewFlatDefMap(map[Attr]*Node{
+	result.Defs = NewFlatDefMap(map[Attr]Node{
 		ctx.Attrs.Get("read"):  read,
 		ctx.Attrs.Get("write"): write,
 		ctx.Attrs.Get("close"): close,

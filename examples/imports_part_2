@@ -1,0 +1,18 @@
+# This imports the file from the same directory called "imports_part_1".
+imported = "imports_part_1".import
+
+# This is a standard library for doing file I/O, in this case for printing
+# to standard output.
+io = "stdlib/io".import
+
+# Directly use a method from the imported library
+without_override = "without override: " + imported.add_three(x=2)!.str
+
+# Override the `three` constant to be 2 instead of 3.
+# Now the add_three method actually adds 2.
+with_override = "with override: " + imported[three=2].add_three(x=2)!.str
+
+# Output is
+# without override: 5
+# with override: 4
+result = io.print(line:=without_override + "\n" + with_override)!

@@ -8,9 +8,9 @@
 # The script will print various errors, e.g. if you enter invalid characters or if there
 # is an error reading from stdin.
 
-io = "stdlib/io".import!
-errors = "stdlib/errors".import!
-List = "stdlib/collections".import!.List
+io = "stdlib/io".import
+errors = "stdlib/errors".import
+List = "stdlib/collections".import.List
 
 # Read a row of the board as a list of numbers in [0, 9].
 read_row = {

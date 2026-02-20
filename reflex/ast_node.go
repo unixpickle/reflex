@@ -12,7 +12,7 @@ func (p *ASTError) Error() string {
 }
 
 type ASTNode interface {
-	Node(ctx *Context, parents []*Node) (*Node, error)
+	Node(ctx *Context, parents []Block) (Node, error)
 }
 
 type ASTParent struct {
@@ -20,14 +20,13 @@ type ASTParent struct {
 	Depth int
 }
 
-func (a *ASTParent) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTParent) Node(ctx *Context, parents []Block) (Node, error) {
 	if a.Depth+1 > len(parents) {
 		return nil, &ASTError{Msg: "parent access goes beyond top scope", Pos: a.Pos}
 	}
-	return &Node{
-		Kind: NodeKindBackEdge,
-		Pos:  a.Pos,
-		Base: parents[len(parents)-(a.Depth+1)],
+	return &NodeBackEdge{
+		NodeBase: NodeBase{P: a.Pos},
+		Ref:      parents[len(parents)-(a.Depth+1)],
 	}, nil
 }
 
@@ -35,11 +34,10 @@ type ASTSelfRef struct {
 	Pos Pos
 }
 
-func (a *ASTSelfRef) Node(ctx *Context, parents []*Node) (*Node, error) {
-	return &Node{
-		Kind: NodeKindBackEdge,
-		Pos:  a.Pos,
-		Base: parents[len(parents)-1],
+func (a *ASTSelfRef) Node(ctx *Context, parents []Block) (Node, error) {
+	return &NodeBackEdge{
+		NodeBase: NodeBase{P: a.Pos},
+		Ref:      parents[len(parents)-1],
 	}, nil
 }
 
@@ -49,16 +47,15 @@ type ASTAccess struct {
 	Attr string
 }
 
-func (a *ASTAccess) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTAccess) Node(ctx *Context, parents []Block) (Node, error) {
 	baseNode, err := a.Base.Node(ctx, parents)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{
-		Kind: NodeKindAccess,
-		Pos:  a.Pos,
-		Base: baseNode,
-		Attr: ctx.Attrs.Get(a.Attr),
+	return &NodeAccess{
+		NodeBase: NodeBase{P: a.Pos},
+		Base:     baseNode,
+		Attr:     ctx.Attrs.Get(a.Attr),
 	}, nil
 }
 
@@ -67,7 +64,7 @@ type ASTIdentifier struct {
 	Name string
 }
 
-func (a *ASTIdentifier) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTIdentifier) Node(ctx *Context, parents []Block) (Node, error) {
 	return (&ASTAccess{Pos: a.Pos, Base: &ASTSelfRef{Pos: a.Pos}, Attr: a.Name}).Node(ctx, parents)
 }
 
@@ -76,18 +73,16 @@ type ASTAncestorLookup struct {
 	Attr string
 }
 
-func (a *ASTAncestorLookup) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTAncestorLookup) Node(ctx *Context, parents []Block) (Node, error) {
 	attr := ctx.Attrs.Get(a.Attr)
 	for i := len(parents) - 2; i >= 0; i-- {
 		parent := parents[i]
 		if parent.Defines(attr) {
-			return &Node{
-				Kind: NodeKindAccess,
-				Pos:  a.Pos,
-				Base: &Node{
-					Kind: NodeKindBackEdge,
-					Pos:  a.Pos,
-					Base: parent,
+			return &NodeAccess{
+				NodeBase: NodeBase{P: a.Pos},
+				Base: &NodeBackEdge{
+					NodeBase: NodeBase{P: a.Pos},
+					Ref:      parent,
 				},
 				Attr: ctx.Attrs.Get(a.Attr),
 			}, nil
@@ -104,11 +99,10 @@ type ASTBlock struct {
 	Defs map[string]ASTNode
 }
 
-func (a *ASTBlock) Node(ctx *Context, parents []*Node) (*Node, error) {
-	n := &Node{
-		Kind: NodeKindBlock,
-		Pos:  a.Pos,
-		Defs: dummyDefs(ctx, a.Defs),
+func (a *ASTBlock) Node(ctx *Context, parents []Block) (Node, error) {
+	n := &NodeBlock{
+		NodeBase: NodeBase{P: a.Pos},
+		Defs:     dummyDefs(ctx, a.Defs),
 	}
 	if defs, err := instantiateDefs(ctx, append(parents, n), n, a.Defs); err != nil {
 		return nil, err
@@ -119,15 +113,15 @@ func (a *ASTBlock) Node(ctx *Context, parents []*Node) (*Node, error) {
 }
 
 func dummyDefs[V any](ctx *Context, d map[string]V) DefMap {
-	m := map[Attr]*Node{}
+	m := map[Attr]Node{}
 	for k := range d {
 		m[ctx.Attrs.Get(k)] = nil
 	}
 	return NewFlatDefMap(m)
 }
 
-func instantiateDefs(ctx *Context, parents []*Node, n *Node, defs map[string]ASTNode) (DefMap, error) {
-	newDefs := map[Attr]*Node{}
+func instantiateDefs(ctx *Context, parents []Block, n Node, defs map[string]ASTNode) (DefMap, error) {
+	newDefs := map[Attr]Node{}
 	for k, v := range defs {
 		newNode, err := v.Node(ctx, parents)
 		if err != nil {
@@ -145,17 +139,16 @@ type ASTOverride struct {
 	Aliases map[string]string
 }
 
-func (a *ASTOverride) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTOverride) Node(ctx *Context, parents []Block) (Node, error) {
 	base, err := a.Base.Node(ctx, parents)
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{
-		Kind:    NodeKindOverride,
-		Pos:     a.Pos,
-		Base:    base,
-		Defs:    dummyDefs(ctx, a.Defs),
-		Aliases: map[Attr]Attr{},
+	n := &NodeOverride{
+		NodeBase: NodeBase{P: a.Pos},
+		Base:     base,
+		Defs:     dummyDefs(ctx, a.Defs),
+		Aliases:  map[Attr]Attr{},
 	}
 	for k, v := range a.Aliases {
 		n.Aliases[ctx.Attrs.Get(k)] = ctx.Attrs.Get(v)
@@ -175,17 +168,16 @@ type ASTCall struct {
 	Eager map[string]ASTNode
 }
 
-func (a *ASTCall) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTCall) Node(ctx *Context, parents []Block) (Node, error) {
 	base, err := a.Base.Node(ctx, parents)
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{
-		Kind:  NodeKindOverride,
-		Pos:   a.Pos,
-		Base:  base,
-		Defs:  dummyDefs(ctx, a.Defs),
-		Eager: dummyDefs(ctx, a.Eager),
+	n := &NodeOverride{
+		NodeBase: NodeBase{P: a.Pos},
+		Base:     base,
+		Defs:     dummyDefs(ctx, a.Defs),
+		Eager:    dummyDefs(ctx, a.Eager),
 	}
 	if defs, err := instantiateDefs(ctx, parents, n, a.Defs); err != nil {
 		return nil, err
@@ -205,7 +197,7 @@ type ASTIntLit struct {
 	Value int64
 }
 
-func (a *ASTIntLit) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTIntLit) Node(ctx *Context, parents []Block) (Node, error) {
 	return ctx.IntNode(a.Pos, a.Value), nil
 }
 
@@ -214,7 +206,7 @@ type ASTFloatLit struct {
 	Value float64
 }
 
-func (a *ASTFloatLit) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTFloatLit) Node(ctx *Context, parents []Block) (Node, error) {
 	return ctx.FloatNode(a.Pos, a.Value), nil
 }
 
@@ -223,7 +215,7 @@ type ASTStrLit struct {
 	Value string
 }
 
-func (a *ASTStrLit) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTStrLit) Node(ctx *Context, parents []Block) (Node, error) {
 	return ctx.StrNode(a.Pos, a.Value), nil
 }
 
@@ -234,7 +226,7 @@ type ASTTernary struct {
 	IfFalse ASTNode
 }
 
-func (a *ASTTernary) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTTernary) Node(ctx *Context, parents []Block) (Node, error) {
 	equiv := &ASTAccess{
 		Pos: a.Pos,
 		Base: &ASTCall{
@@ -261,7 +253,7 @@ type ASTBinaryOp struct {
 	Y      ASTNode
 }
 
-func (a *ASTBinaryOp) Node(ctx *Context, parents []*Node) (*Node, error) {
+func (a *ASTBinaryOp) Node(ctx *Context, parents []Block) (Node, error) {
 	equiv := &ASTAccess{
 		Pos: a.Pos,
 		Base: &ASTCall{

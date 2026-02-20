@@ -1,0 +1,5 @@
+# Defines a constant and a method for imports_part_2 to use.
+three = 3
+add_three = {
+  result = ^.three + x
+}

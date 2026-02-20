@@ -30,7 +30,7 @@ func (i *InterpreterError) Error() string {
 	return fmt.Sprintf("%s at\n%s", i.Inner, trace)
 }
 
-func formatAvailable(attrs *AttrTable, node *Node) string {
+func formatAvailable(attrs *AttrTable, node *NodeBlock) string {
 	var strs []string
 	for attr := range node.Defs.Map(nil) {
 		strs = append(strs, fmt.Sprintf("%#v", attrs.Name(attr)))
@@ -39,7 +39,7 @@ func formatAvailable(attrs *AttrTable, node *Node) string {
 }
 
 // Evaluate an expression until it becomes a literal or a block.
-func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*Node, error) {
+func Evaluate(ctx *Context, node Node, trace GapStack, gc *GarbageCollector) (Node, error) {
 	if node == nil {
 		panic("nil node")
 	}
@@ -49,11 +49,11 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 	}
 	for {
 		gc.MaybeCollect()
-		pos := node.Pos
+		pos := node.Pos()
 		newTrace := trace
 		newTrace.Push(pos)
 
-		nest := func(newNode *Node, active ...*Node) (*Node, error) {
+		nest := func(newNode Node, active ...Node) (Node, error) {
 			for _, x := range active {
 				gc.Retain(x)
 			}
@@ -69,7 +69,7 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			}
 			return res, err
 		}
-		doNext := func(newNode *Node) {
+		doNext := func(newNode Node) {
 			if newNode == nil {
 				panic("nil node")
 			}
@@ -77,18 +77,19 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			trace = newTrace
 		}
 
-		switch node.Kind {
-		case NodeKindAccess:
+		switch node := node.(type) {
+		case *NodeAccess:
 			b := node.Base
 			a := node.Attr
 			node = nil
-			base, err := Evaluate(ctx, b, newTrace, gc)
+			baseRaw, err := Evaluate(ctx, b, newTrace, gc)
 			if err != nil {
 				return nil, err
 			}
-			if base.Kind != NodeKindBlock {
+			base, ok := baseRaw.(*NodeBlock)
+			if !ok {
 				return nil, &InterpreterError{
-					Inner: fmt.Errorf("unexpected kind for base: %d", base.Kind),
+					Inner: fmt.Errorf("unexpected type for access base: %T", baseRaw),
 					Trace: newTrace,
 				}
 			}
@@ -104,17 +105,23 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 				}
 			}
 			doNext(obj)
-		case NodeKindOverride:
+		case *NodeOverride:
 			base, err := nest(node.Base, node)
 			if err != nil {
 				return nil, err
 			}
-			newBase := base.Clone(nil)
-			newBase.Pos = node.Pos
+			newBase, ok := base.Clone(nil).(*NodeBlock)
+			if !ok {
+				return nil, &InterpreterError{
+					Inner: fmt.Errorf("unexpected type for override base: %T", base),
+					Trace: newTrace,
+				}
+			}
+			newBase.P = node.P
 			newBase.Defs = NewOverrideDefMap(newBase.Defs, NewCloneDefMapSingle(node.Defs, node, newBase))
 
 			if len(node.Aliases) > 0 {
-				aliasMap := map[Attr]*Node{}
+				aliasMap := map[Attr]Node{}
 				for dst, src := range node.Aliases {
 					var ok bool
 					aliasMap[dst], ok = newBase.Defs.Get(src)
@@ -133,16 +140,15 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			}
 
 			if node.Eager != nil {
-				newDefs := map[Attr]*Node{}
+				newDefs := map[Attr]Node{}
 				for k, v := range node.Eager.Map(nil) {
 					result, err := nest(v, node, newBase)
 					if err != nil {
 						return nil, err
 					}
-					resNode := &Node{
-						Kind: NodeKindUnclonable,
-						Pos:  result.Pos,
-						Base: result,
+					resNode := &NodeUnclonable{
+						NodeBase: NodeBase{P: result.Pos()},
+						Wrapped:  result,
 					}
 					newDefs[k] = resNode
 					gc.Retain(resNode)
@@ -156,17 +162,17 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 			}
 			newBase.Defs = MaybeFlatten(newBase.Defs)
 			return newBase, nil
-		case NodeKindBackEdge:
-			if node.Base.Kind != NodeKindBlock {
-				panic("unexpected back edge type: " + node.Base.Kind.String())
+		case *NodeBackEdge:
+			if _, ok := node.Ref.(*NodeBlock); !ok {
+				panic(fmt.Sprintf("unexpected back edge type: %T", node.Ref))
 			}
-			return node.Base, nil
-		case NodeKindUnclonable:
-			doNext(node.Base)
-		case NodeKindBuiltInOp:
-			op := node.BuiltInOp
+			return node.Ref, nil
+		case *NodeUnclonable:
+			doNext(node.Wrapped)
+		case *NodeBuiltInOp:
+			op := node.Op
 			for {
-				result, nextExpr, err := op.Next(node.Base)
+				result, nextExpr, err := op.Next(node.Context)
 				if err != nil {
 					return nil, &InterpreterError{Inner: err, Trace: trace}
 				}
@@ -178,12 +184,12 @@ func Evaluate(ctx *Context, node *Node, trace GapStack, gc *GarbageCollector) (*
 				if err != nil {
 					return nil, err
 				}
-				op, err = op.Tell(node.Base, nextResult)
+				op, err = op.Tell(node.Context, nextResult)
 				if err != nil {
 					return nil, &InterpreterError{Inner: err, Trace: newTrace}
 				}
 			}
-		case NodeKindIntLit, NodeKindFloatLit, NodeKindStrLit, NodeKindBytesLit, NodeKindBlock:
+		case *NodeIntLit, *NodeFloatLit, *NodeStrLit, *NodeBytesLit, *NodeBlock:
 			return node, nil
 		default:
 			panic("unknown node type")

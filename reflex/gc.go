@@ -8,7 +8,7 @@ import (
 
 type GarbageCollector struct {
 	shouldCheck atomic.Int64
-	refCount    map[*Node]uint64
+	refCount    map[Node]uint64
 	lastBytes   uint64
 	shutdown    chan struct{}
 }
@@ -17,7 +17,7 @@ func NewGarbageCollector() *GarbageCollector {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	res := &GarbageCollector{
-		refCount:  map[*Node]uint64{},
+		refCount:  map[Node]uint64{},
 		lastBytes: stats.Alloc,
 		shutdown:  make(chan struct{}, 0),
 	}
@@ -26,12 +26,12 @@ func NewGarbageCollector() *GarbageCollector {
 	return res
 }
 
-func (g *GarbageCollector) Retain(n *Node) {
+func (g *GarbageCollector) Retain(n Node) {
 	x := g.refCount[n]
 	g.refCount[n] = x + 1
 }
 
-func (g *GarbageCollector) Release(n *Node) {
+func (g *GarbageCollector) Release(n Node) {
 	x := g.refCount[n]
 	if x <= 0 {
 		panic("negative ref count")

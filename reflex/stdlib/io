@@ -1,4 +1,4 @@
-errors = "stdlib/errors".import!
+errors = "stdlib/errors".import
 
 print = {
   # User can pass str or line

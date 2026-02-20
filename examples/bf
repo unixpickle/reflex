@@ -2,7 +2,7 @@
 # Brainf*ck interpreter #
 #########################
 
-io = "stdlib/io".import!
+io = "stdlib/io".import
 
 # A stack which is prefilled with infinite zeroes.
 Stack = {

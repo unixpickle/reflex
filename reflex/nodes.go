@@ -1,155 +1,223 @@
 package reflex
 
-type NodeKind int
-
-const (
-	NodeKindAccess NodeKind = iota
-	NodeKindBlock
-	NodeKindOverride
-	NodeKindBackEdge
-	NodeKindIntLit
-	NodeKindFloatLit
-	NodeKindStrLit
-	NodeKindBytesLit
-	NodeKindBuiltInOp
-	NodeKindUnclonable
-)
-
-func (n NodeKind) String() string {
-	switch n {
-	case NodeKindAccess:
-		return "NodeKindAccess"
-	case NodeKindBlock:
-		return "NodeKindBlock"
-	case NodeKindOverride:
-		return "NodeKindOverride"
-	case NodeKindBackEdge:
-		return "NodeKindBackEdge"
-	case NodeKindIntLit:
-		return "NodeKindIntLit"
-	case NodeKindFloatLit:
-		return "NodeKindFloatLit"
-	case NodeKindStrLit:
-		return "NodeKindStrLit"
-	case NodeKindBytesLit:
-		return "NodeKindBytesLit"
-	case NodeKindBuiltInOp:
-		return "NodeKindBuiltInOp"
-	case NodeKindUnclonable:
-		return "NodeKindUnclonable"
-	default:
-		panic("no node kind")
-	}
+type Node interface {
+	Clone(*ReplaceMap) Node
+	Flatten()
+	Pos() Pos
 }
 
-// A unit value or container inside the interpreter.
-type Node struct {
-	Kind NodeKind
-	Pos  Pos
+type Block interface {
+	Node
+	Defines(Attr) bool
+}
 
-	BuiltInOp BuiltInOp
-
-	// Access, back edge, built in op, or unclonable
-	Base *Node
-
-	// Access or Identifier
-	Attr Attr
-
-	// Block / override
-	Defs    DefMap
-	Eager   DefMap
-	Aliases map[Attr]Attr
-
-	// Literals
-	StrLit   string
-	BytesLit []byte
-	IntLit   int64
-	FloatLit float64
-
+type NodeBase struct {
+	P          Pos
 	DidFlatten bool
 }
 
-// Clone creates a copy of the node and applies the replacement map,
-// updating it to include the new node for any subnodes.
-func (n *Node) Clone(r *ReplaceMap[Node]) *Node {
-	if n.Kind == NodeKindUnclonable {
-		return n
-	}
-
-	newNode := &Node{Kind: n.Kind, Pos: n.Pos}
-	switch n.Kind {
-	case NodeKindAccess:
-		newNode.Base = n.Base.Clone(r)
-		newNode.Attr = n.Attr
-	case NodeKindBlock:
-		newMap := r.Inserting(n, newNode)
-		newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
-	case NodeKindOverride:
-		newMap := r.Inserting(n, newNode)
-		newNode.Base = n.Base.Clone(r)
-		newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
-		if n.Eager != nil {
-			newNode.Eager = MaybeFlatten(NewCloneDefMap(n.Eager, r))
-		}
-		newNode.Aliases = n.Aliases
-	case NodeKindBuiltInOp:
-		newNode.BuiltInOp = n.BuiltInOp
-		fallthrough
-	case NodeKindBackEdge:
-		if repl, ok := r.Get(n.Base); ok {
-			newNode.Base = repl
-		} else {
-			newNode.Base = n.Base
-		}
-	case NodeKindStrLit:
-		newNode.StrLit = n.StrLit
-	case NodeKindBytesLit:
-		newNode.BytesLit = n.BytesLit
-	case NodeKindIntLit:
-		newNode.IntLit = n.IntLit
-	case NodeKindFloatLit:
-		newNode.FloatLit = n.FloatLit
-	}
-	return newNode
+func (n *NodeBase) Pos() Pos {
+	return n.P
 }
 
-// Flatten performs all nested clones to avoid dead references.
-//
-// This is slow but can reduce memory usage.
-func (n *Node) Flatten() {
-	if n.DidFlatten {
-		return
+type NodeAccess struct {
+	NodeBase
+	Base Node
+	Attr Attr
+}
+
+func (n *NodeAccess) Clone(r *ReplaceMap) Node {
+	return &NodeAccess{
+		NodeBase: n.NodeBase,
+		Base:     n.Base.Clone(r),
+		Attr:     n.Attr,
 	}
-	n.DidFlatten = true
-	for _, mPtr := range []*DefMap{&n.Defs, &n.Eager} {
-		if *mPtr == nil {
-			continue
-		}
-		newMap := (*mPtr).Map(nil)
-		for _, newN := range newMap {
-			newN.Flatten()
-		}
-		*mPtr = NewFlatDefMap(newMap)
-	}
-	if n.Base != nil {
+}
+
+func (n *NodeAccess) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
 		n.Base.Flatten()
 	}
 }
 
-// Defines checks if an attribute is defined in the node.
-func (n *Node) Defines(attr Attr) bool {
-	for _, defs := range []DefMap{n.Defs, n.Eager} {
-		if defs == nil {
-			continue
+type NodeBlock struct {
+	NodeBase
+	Defs DefMap
+}
+
+func (n *NodeBlock) Clone(r *ReplaceMap) Node {
+	newNode := &NodeBlock{NodeBase: n.NodeBase}
+	newMap := r.Inserting(n, newNode)
+	newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
+	return newNode
+}
+
+func (n *NodeBlock) Defines(attr Attr) bool {
+	_, ok := n.Defs.Get(attr)
+	return ok
+}
+
+func (n *NodeBlock) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
+		newMap := n.Defs.Map(nil)
+		for _, newN := range newMap {
+			newN.Flatten()
 		}
-		if _, ok := defs.Get(attr); ok {
-			return true
-		}
+		n.Defs = NewFlatDefMap(newMap)
 	}
-	if n.Aliases != nil {
-		if _, ok := n.Aliases[attr]; ok {
-			return true
-		}
+}
+
+type NodeOverride struct {
+	NodeBase
+	Base    Node
+	Defs    DefMap
+	Eager   DefMap
+	Aliases map[Attr]Attr
+}
+
+func (n *NodeOverride) Clone(r *ReplaceMap) Node {
+	newNode := &NodeOverride{
+		NodeBase: n.NodeBase,
+		Base:     n.Base.Clone(r),
+		Aliases:  n.Aliases,
+	}
+	newMap := r.Inserting(n, newNode)
+	newNode.Defs = MaybeFlatten(NewCloneDefMap(n.Defs, newMap))
+	if n.Eager != nil {
+		newNode.Eager = MaybeFlatten(NewCloneDefMap(n.Eager, r))
+	}
+	return newNode
+}
+
+func (n *NodeOverride) Defines(attr Attr) bool {
+	if _, ok := n.Defs.Get(attr); ok {
+		return true
+	}
+	if _, ok := n.Eager.Get(attr); ok {
+		return true
+	}
+	if _, ok := n.Aliases[attr]; ok {
+		return true
 	}
 	return false
+}
+
+func (n *NodeOverride) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
+		for _, mPtr := range []*DefMap{&n.Defs, &n.Eager} {
+			if *mPtr == nil {
+				continue
+			}
+			newMap := (*mPtr).Map(nil)
+			for _, newN := range newMap {
+				newN.Flatten()
+			}
+			*mPtr = NewFlatDefMap(newMap)
+		}
+		n.Base.Flatten()
+	}
+}
+
+type NodeBackEdge struct {
+	NodeBase
+	Ref Node
+}
+
+func (n *NodeBackEdge) Clone(r *ReplaceMap) Node {
+	if repl, ok := r.Get(n.Ref); ok {
+		return &NodeBackEdge{NodeBase: n.NodeBase, Ref: repl}
+	} else {
+		return n
+	}
+}
+
+func (n *NodeBackEdge) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
+		n.Ref.Flatten()
+	}
+}
+
+type LitBase struct {
+	NodeBase
+}
+
+func (n *LitBase) Flatten() {
+	n.DidFlatten = true
+}
+
+type NodeIntLit struct {
+	LitBase
+	Lit int64
+}
+
+func (n *NodeIntLit) Clone(r *ReplaceMap) Node {
+	return n
+}
+
+type NodeFloatLit struct {
+	LitBase
+	Lit float64
+}
+
+func (n *NodeFloatLit) Clone(r *ReplaceMap) Node {
+	return n
+}
+
+type NodeStrLit struct {
+	LitBase
+	Lit string
+}
+
+func (n *NodeStrLit) Clone(r *ReplaceMap) Node {
+	return n
+}
+
+type NodeBytesLit struct {
+	LitBase
+	Lit []byte
+}
+
+func (n *NodeBytesLit) Clone(r *ReplaceMap) Node {
+	return n
+}
+
+type NodeBuiltInOp struct {
+	NodeBase
+	Context Node
+	Op      BuiltInOp
+}
+
+func (n *NodeBuiltInOp) Clone(r *ReplaceMap) Node {
+	if repl, ok := r.Get(n.Context); ok {
+		return &NodeBuiltInOp{NodeBase: n.NodeBase, Context: repl, Op: n.Op}
+	} else {
+		return n
+	}
+}
+
+func (n *NodeBuiltInOp) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
+		n.Context.Flatten()
+	}
+}
+
+type NodeUnclonable struct {
+	NodeBase
+	Wrapped Node
+}
+
+func (n *NodeUnclonable) Clone(r *ReplaceMap) Node {
+	return n
+}
+
+func (n *NodeUnclonable) Flatten() {
+	if !n.DidFlatten {
+		n.DidFlatten = true
+		n.Wrapped.Flatten()
+	}
 }
