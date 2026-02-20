@@ -38,41 +38,38 @@ func main() {
 		fmt.Fprintln(os.Stderr, "failed to process nodes:", err)
 		os.Exit(1)
 	}
-	access := reflex.NewNodeAccess(
-		reflex.Pos{File: "interpreter"},
-		node,
-		ctx.Attrs.Get("result"),
-	)
-	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack())
+	access := &reflex.Node{
+		Kind: reflex.NodeKindAccess,
+		Pos:  reflex.Pos{File: "interpreter"},
+		Base: node,
+		Attr: ctx.Attrs.Get("result"),
+	}
+	result, err := reflex.Evaluate(ctx, access, reflex.NewGapStack(), nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to evaluate:", err)
 		os.Exit(1)
 	}
 
-	resBlock, ok := unlazify(result).(reflex.Block)
-	if !ok {
-		fmt.Fprintln(os.Stderr, "unexpected result type:", fmt.Sprintf("%T", result))
+	if result.Kind != reflex.NodeKindBlock {
+		fmt.Fprintln(os.Stderr, "unexpected result type:", result.Kind)
 		os.Exit(1)
 	}
 
-	if inner, ok := resBlock.Defs()[ctx.Attrs.Get("_inner")]; ok {
-		switch inner := unlazify(inner).(type) {
-		case *reflex.NodeIntLit:
-			fmt.Println(inner.Lit)
-		case *reflex.NodeStrLit:
-			fmt.Println(inner.Lit)
-		default:
-			fmt.Fprintln(os.Stderr, "unexpected result._inner type:", fmt.Sprintf("%T", inner))
+	if inner, ok := result.Defs.Get(ctx.Attrs.Get("_inner")); ok {
+		if inner.Kind == reflex.NodeKindIntLit {
+			fmt.Println(inner.IntLit)
+		} else if inner.Kind == reflex.NodeKindStrLit {
+			fmt.Println(inner.StrLit)
+		} else {
+			fmt.Fprintln(os.Stderr, "unexpected result._inner type:", result.Kind)
 			os.Exit(1)
 		}
-	} else if success, ok := resBlock.Defs()[ctx.Attrs.Get("success")]; ok {
-		if grabIntLiteral(ctx, unlazify(success)) == 0 {
-			if errMsg, ok := resBlock.Defs()[ctx.Attrs.Get("error")]; ok {
-				if errMsgBlock, ok := unlazify(errMsg).(reflex.Block); ok {
-					if inner, ok := unlazify(errMsgBlock.Defs()[ctx.Attrs.Get("_inner")]).(*reflex.NodeStrLit); ok {
-						fmt.Fprintln(os.Stderr, "error: "+inner.Lit)
-						os.Exit(1)
-					}
+	} else if success, ok := result.Defs.Get(ctx.Attrs.Get("success")); ok {
+		if grabIntLiteral(ctx, success) == 0 {
+			if errMsg, ok := result.Defs.Get(ctx.Attrs.Get("error")); ok {
+				if inner, ok := errMsg.Defs.Get(ctx.Attrs.Get("_inner")); ok {
+					fmt.Fprintln(os.Stderr, "error: "+inner.StrLit)
+					os.Exit(1)
 				}
 			}
 			fmt.Fprintln(os.Stderr, "unsuccessful result")
@@ -84,24 +81,17 @@ func main() {
 	}
 }
 
-func unlazify(obj reflex.Node) reflex.Node {
-	if x, ok := obj.(*reflex.NodeLazyClone); ok {
-		return x.Inner()
-	}
-	return obj
-}
-
-func grabIntLiteral(ctx *reflex.Context, obj reflex.Node) int64 {
-	if intLit, ok := obj.(*reflex.NodeIntLit); ok {
-		return intLit.Lit
-	} else if block, ok := obj.(reflex.Block); ok {
-		if x, ok := block.Defs()[ctx.Attrs.Get("_inner")]; ok {
-			if intLit, ok := unlazify(x).(*reflex.NodeIntLit); ok {
-				return intLit.Lit
+func grabIntLiteral(ctx *reflex.Context, obj *reflex.Node) int64 {
+	if obj.Kind == reflex.NodeKindIntLit {
+		return obj.IntLit
+	} else if obj.Kind == reflex.NodeKindBlock {
+		if x, ok := obj.Defs.Get(ctx.Attrs.Get("_inner")); ok {
+			if x.Kind == reflex.NodeKindIntLit {
+				return x.IntLit
 			}
 		}
 	}
-	fmt.Fprintln(os.Stderr, "expected int literal but got unexpected type", fmt.Sprintf("%T", obj))
+	fmt.Fprintln(os.Stderr, "expected int literal but got unexpected type")
 	os.Exit(1)
 	panic("unreachable")
 }

@@ -1,6 +1,5 @@
 maybe = {
   success = 0
-  result = {}
 
   logical_and = {
     x = ^
